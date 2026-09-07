@@ -168,8 +168,18 @@ const BgRemoval = (() => {
    * used by Save/Recopy (Step 5) after CanvasEditor.loadState() has
    * already applied the actual background to the canvas. Purely
    * cosmetic: does not call back into CanvasEditor.
+   *
+   * Also re-enables removeBgBtn when a restored job has a photo — found
+   * missing during testing: this button only ever enabled via
+   * 'upload:change' (a brand-new upload), never on a restored job
+   * (autosave/Open Job/Recopy/Import don't fire that event at all — the
+   * original File doesn't survive a save/reload), so it stayed
+   * permanently disabled after "Continue where you left off" despite a
+   * photo clearly being loaded. Same bug hit Auto Enhance and the new
+   * Add Formal Attire button too — see those files.
    */
   function syncUI(background, hasPhoto) {
+    removeBgBtn.disabled = !hasPhoto;
     bgSection.classList.toggle('is-hidden', !hasPhoto);
     const mode = background ? background.mode : 'none';
 

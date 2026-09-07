@@ -150,7 +150,6 @@ const SaveRecopy = (() => {
     IdSize.setState(job.idSize);
     PrintExport.setState(job.printLayout);
     await CanvasEditor.loadState(job.photo);
-    AttireControls.syncUI(job.photo);
     BgRemoval.syncUI(job.photo.background, !!job.photo.photoDataUrl);
     // Lets jobLifecycle.js know the workspace now matches a known job
     // (blank, saved, or imported) — see its own "dirty" tracking.

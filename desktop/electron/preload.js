@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveJobFileAs: (data, suggestedName) => ipcRenderer.invoke('save-job-file-as', { data, suggestedName }),
   /** Overwrites an already-chosen path with no dialog (the "Save" button's silent re-save). */
   writeJobFile: (filePath, data) => ipcRenderer.invoke('write-job-file', { filePath, data }),
+  /** AI provider HTTP call (see modelProviders.js) — made from the main process to avoid renderer CORS. */
+  callProvider: (request) => ipcRenderer.invoke('ai-provider-call', request),
 });

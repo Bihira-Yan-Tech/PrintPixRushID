@@ -71,6 +71,48 @@ ipcMain.handle('write-job-file', async (event, { filePath, data }) => {
   }
 });
 
+/**
+ * AI provider calls (ModelProviders.js's testProvider()/callEdit()) —
+ * plain HTTPS requests made from the main process instead of the
+ * renderer's own fetch(), so they aren't subject to browser CORS (which
+ * most of these provider APIs don't grant to an arbitrary file://
+ * origin anyway). Returns `{ status, body }` on any completed HTTP
+ * response (even 4xx/5xx — the renderer decides what counts as
+ * failure) or `{ error }` only for a real network-level failure
+ * (DNS, timeout, connection refused).
+ */
+ipcMain.handle('ai-provider-call', async (event, request) => {
+  const https = require('https');
+  const { URL } = require('url');
+  return new Promise((resolve) => {
+    let url;
+    try {
+      url = new URL(request.url);
+    } catch (err) {
+      resolve({ error: `Invalid URL: ${request.url}` });
+      return;
+    }
+    const req = https.request(url, {
+      method: request.method || 'GET',
+      headers: request.headers || {},
+      timeout: 60000,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        const contentType = res.headers['content-type'] || '';
+        const body = contentType.startsWith('image/') ? buf.toString('base64') : buf.toString('utf-8');
+        resolve({ status: res.statusCode, body });
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ error: 'Request timed out.' }); });
+    req.on('error', (err) => resolve({ error: String((err && err.message) || err) }));
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+});
+
 app.whenReady().then(() => {
   createWindow();
 
