@@ -1,0 +1,41 @@
+{
+  "name": "printpix-rush-id-desktop",
+  "version": "1.0.0",
+  "description": "PrintPix Rush ID — ID photo generator & print layout editor (Windows desktop app)",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.printpixrushid.app",
+    "productName": "PrintPix Rush ID",
+    "directories": {
+      "output": "dist-installer"
+    },
+    "files": [
+      "index.html",
+      "css/**/*",
+      "js/**/*",
+      "vendor/**/*",
+      "assets/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PrintPix Rush ID"
+    }
+  }
+}

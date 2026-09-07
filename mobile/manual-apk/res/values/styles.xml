@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Explicit, non-translucent, non-floating fullscreen theme for
+      MainActivity. Needed because AndroidManifest.xml declares a fixed
+      android:screenOrientation="landscape" — some Android versions
+      (most notably 8.0/API 26, a well-documented platform bug) throw
+      "IllegalStateException: Only fullscreen opaque activities can
+      request orientation" at launch if the activity's theme doesn't
+      EXPLICITLY declare windowIsTranslucent/windowIsFloating false.
+      The bare `@android:style/Theme.NoTitleBar` used before only
+      removes the title bar — it never declares those attributes either
+      way, leaving the app vulnerable on affected OS versions. This
+      extends the same base theme but pins the attributes that matter.
+    -->
+    <style name="AppTheme" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+</resources>

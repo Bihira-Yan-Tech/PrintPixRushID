@@ -1,0 +1,17 @@
+{
+  "name": "printpix-rush-id-mobile",
+  "version": "1.0.0",
+  "description": "PrintPix Rush ID — ID photo generator & print layout editor (Android app)",
+  "private": true,
+  "scripts": {
+    "sync:mobile": "node scripts/sync-www.js && npx cap sync android",
+    "build:apk": "npm run sync:mobile && cd android && gradlew.bat assembleRelease",
+    "build:apk:manual": "powershell -ExecutionPolicy Bypass -File scripts/build-apk-manual.ps1"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0"
+  }
+}

@@ -1,0 +1,23 @@
+node_modules/
+dist-installer/
+.electron-cache/
+*.log
+
+# Generated web asset copy for Capacitor/manual mobile builds — root
+# index.html/css/js/vendor/assets stay the single source of truth.
+# `**/` prefix so these match under mobile/ (where they actually live),
+# not just at repo root — a root-anchored `android/build/` etc. here
+# silently matched nothing real and almost let the signing keystore and
+# APK build output get committed. See CLAUDE.md's git/security notes.
+**/www/
+
+# Capacitor's generated native Android project + its own build output.
+**/android/build/
+**/android/app/build/
+**/android/.gradle/
+**/android/local.properties
+
+# Signing keystore — never commit real signing keys to source control.
+**/android/keystore/
+**/manual-apk/build/
+**/manual-apk/assets/www/

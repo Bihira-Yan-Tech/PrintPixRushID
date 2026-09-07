@@ -1,0 +1,8 @@
+{
+  "appId": "com.printpixrushid.app",
+  "appName": "PrintPix Rush ID",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
