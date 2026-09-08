@@ -73,16 +73,21 @@ ipcMain.handle('write-job-file', async (event, { filePath, data }) => {
 
 /**
  * AI provider calls (ModelProviders.js's testProvider()/callEdit()) —
- * plain HTTPS requests made from the main process instead of the
+ * plain HTTP(S) requests made from the main process instead of the
  * renderer's own fetch(), so they aren't subject to browser CORS (which
  * most of these provider APIs don't grant to an arbitrary file://
  * origin anyway). Returns `{ status, body }` on any completed HTTP
  * response (even 4xx/5xx — the renderer decides what counts as
  * failure) or `{ error }` only for a real network-level failure
  * (DNS, timeout, connection refused).
+ *
+ * Picks `http` vs `https` off the URL's actual protocol — a real bug
+ * found via testing: this originally always used `https`, which threw
+ * `ERR_INVALID_PROTOCOL` for a self-hosted provider like a local
+ * OmniRoute instance (e.g. `http://localhost:20128/v1`), a completely
+ * legitimate `baseUrl` for the Custom/OmniRoute preset types.
  */
 ipcMain.handle('ai-provider-call', async (event, request) => {
-  const https = require('https');
   const { URL } = require('url');
   return new Promise((resolve) => {
     let url;
@@ -92,7 +97,8 @@ ipcMain.handle('ai-provider-call', async (event, request) => {
       resolve({ error: `Invalid URL: ${request.url}` });
       return;
     }
-    const req = https.request(url, {
+    const client = url.protocol === 'http:' ? require('http') : require('https');
+    const req = client.request(url, {
       method: request.method || 'GET',
       headers: request.headers || {},
       timeout: 60000,

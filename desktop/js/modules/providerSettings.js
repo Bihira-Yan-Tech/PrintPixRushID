@@ -9,7 +9,7 @@
 const ProviderSettings = (() => {
 
   let modal, openBtn, closeBtn, listEl;
-  let presetSelect, labelInput, keyInput, addBtn;
+  let presetSelect, labelInput, keyInput, baseUrlField, baseUrlInput, addBtn;
 
   function escapeHtml(str) {
     const div = document.createElement('div');
@@ -46,7 +46,7 @@ const ProviderSettings = (() => {
       item.innerHTML = `
         <div class="job-info">
           <span class="job-label">${escapeHtml(config.label)}${preset.supportsImageEdit === false ? ' <span class="hint-text is-compact" style="display:inline;">(no image editing)</span>' : ''}</span>
-          <span class="job-meta">${escapeHtml(preset.label)} — ${statusBadge(config)}</span>
+          <span class="job-meta">${escapeHtml(preset.label)}${config.baseUrl ? ' · ' + escapeHtml(config.baseUrl) : ''} — ${statusBadge(config)}</span>
         </div>
         <div class="job-actions">
           <label class="switch" title="Enabled">
@@ -93,6 +93,7 @@ const ProviderSettings = (() => {
   function onPresetChange() {
     const preset = ModelProviders.PROVIDER_PRESETS[presetSelect.value];
     keyInput.parentElement.classList.toggle('is-hidden', !(preset && preset.needsKey));
+    baseUrlField.classList.toggle('is-hidden', !(preset && preset.needsBaseUrl));
   }
 
   function handleAdd() {
@@ -102,13 +103,19 @@ const ProviderSettings = (() => {
       keyInput.focus();
       return;
     }
+    if (preset && preset.needsBaseUrl && !baseUrlInput.value.trim()) {
+      baseUrlInput.focus();
+      return;
+    }
     ModelProviders.addProvider({
       presetId,
       label: labelInput.value.trim() || preset.label,
       apiKey: keyInput.value.trim(),
+      baseUrl: baseUrlInput.value.trim(),
     });
     labelInput.value = '';
     keyInput.value = '';
+    baseUrlInput.value = '';
     render();
   }
 
@@ -120,6 +127,8 @@ const ProviderSettings = (() => {
     presetSelect = document.getElementById('providerPresetSelect');
     labelInput = document.getElementById('providerLabelInput');
     keyInput = document.getElementById('providerKeyInput');
+    baseUrlField = document.getElementById('providerBaseUrlField');
+    baseUrlInput = document.getElementById('providerBaseUrlInput');
     addBtn = document.getElementById('providerAddBtn');
 
     openBtn.addEventListener('click', open);
@@ -128,6 +137,17 @@ const ProviderSettings = (() => {
     listEl.addEventListener('click', handleListClick);
     listEl.addEventListener('change', handleListChange);
     presetSelect.addEventListener('change', onPresetChange);
+    // Best-effort auto-detect: pasting/typing a recognizable key format
+    // pre-selects the matching provider in the dropdown so the user
+    // doesn't have to hunt for it manually — still fully overridable,
+    // see ModelProviders.detectPresetFromKey()'s own doc comment.
+    keyInput.addEventListener('input', () => {
+      const detected = ModelProviders.detectPresetFromKey(keyInput.value);
+      if (detected && presetSelect.value !== detected) {
+        presetSelect.value = detected;
+        onPresetChange();
+      }
+    });
     addBtn.addEventListener('click', handleAdd);
   }
 

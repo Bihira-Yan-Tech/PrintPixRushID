@@ -241,6 +241,54 @@ const ModelProviders = (() => {
       },
     },
 
+    omniroute: {
+      id: 'omniroute',
+      label: 'OmniRoute',
+      needsKey: true,
+      needsBaseUrl: true,
+      supportsImageEdit: true,
+      // OmniRoute (github.com/diegosouzapw/OmniRoute) is itself an
+      // open-source, self-hosted AI gateway/router across ~350
+      // providers, OpenAI-compatible. It documents a dedicated
+      // `/v1/images/generations` endpoint, but its exact schema for
+      // passing a *reference/source* image (for editing, not just
+      // text-to-image) isn't confidently verifiable from its docs —
+      // rather than guess wrong the way the first Pollinations attempt
+      // did, this uses the same well-established "multimodal chat
+      // completion with an image_url part" convention as the
+      // OpenRouter/custom presets, which OmniRoute's own OpenAI-
+      // compatible chat endpoint should support for any vision+image-
+      // output-capable model it's routing to. `baseUrl` is the user's
+      // own OmniRoute instance (self-hosted — there's no single public
+      // URL for it).
+      buildTestRequest(apiKey, baseUrl) {
+        return { method: 'GET', url: `${(baseUrl || '').replace(/\/+$/, '')}/v1/models`, headers: { Authorization: `Bearer ${apiKey}` } };
+      },
+      parseTestResponse(json) {
+        const list = (json && json.data) || (Array.isArray(json) ? json : []);
+        if (!list.length) throw new Error('No models returned — check the base URL and API key.');
+        return list.map(m => ({ id: m.id || m, label: m.id || m, free: false }));
+      },
+      buildEditRequest(apiKey, modelId, promptText, imageDataUrl, baseUrl) {
+        return {
+          method: 'POST',
+          url: `${(baseUrl || '').replace(/\/+$/, '')}/v1/chat/completions`,
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: modelId,
+            messages: [{ role: 'user', content: [{ type: 'text', text: promptText }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
+            modalities: ['image', 'text'],
+          }),
+        };
+      },
+      parseEditResponse(json) {
+        const msg = json && json.choices && json.choices[0] && json.choices[0].message;
+        const img = msg && msg.images && msg.images[0] && msg.images[0].image_url && msg.images[0].image_url.url;
+        if (!img) throw new Error('OmniRoute did not return an image for this model — it may need a different image-capable model selected.');
+        return img;
+      },
+    },
+
     groq: {
       id: 'groq',
       label: 'Groq',
@@ -470,13 +518,60 @@ const ModelProviders = (() => {
     return preset.parseEditResponse(bodyJson, base64);
   }
 
+  // ---- Key-format auto-detection ----
+  // Best-effort, not authoritative — providers change key formats over
+  // time (e.g. Google has shipped more than one shape), so this only
+  // ever *pre-selects* a suggestion in providerSettings.js's dropdown;
+  // the user can always override it manually. Deliberately does NOT
+  // match a bare "sk-" prefix to a specific preset — that prefix is
+  // shared by OpenAI-style keys across many different unrelated
+  // gateways/providers, so guessing there would be wrong more often
+  // than it's right.
+  const KEY_PATTERNS = [
+    { presetId: 'gemini', test: (k) => /^AIza[0-9A-Za-z_-]{35}$/.test(k) || /^AQ\.[0-9A-Za-z_-]+$/.test(k) },
+    { presetId: 'openrouter', test: (k) => /^sk-or-/.test(k) },
+    { presetId: 'huggingface', test: (k) => /^hf_/.test(k) },
+    { presetId: 'groq', test: (k) => /^gsk_/.test(k) },
+  ];
+
+  function detectPresetFromKey(apiKey) {
+    const k = (apiKey || '').trim();
+    if (!k) return null;
+    const match = KEY_PATTERNS.find((p) => p.test(k));
+    return match ? match.presetId : null;
+  }
+
+  /**
+   * Auto-tests any saved provider that's never been tested yet
+   * (`lastTestStatus === null`) and has what it needs to try (a key,
+   * or none required) — runs once per app load, fire-and-forget, so a
+   * key added in a previous session shows real "Working"/model-list
+   * status the moment Provider Settings is opened, without the user
+   * having to remember to click Test themselves. Deliberately does
+   * NOT re-test already-tested providers on every boot (would mean a
+   * real network call per provider on every single app launch even
+   * when nothing changed) — the manual Test button still exists for a
+   * fresh re-check any time.
+   */
+  async function autoTestUntested() {
+    const configs = loadConfigs();
+    const candidates = configs.filter((c) => {
+      const preset = PROVIDER_PRESETS[c.presetId] || PROVIDER_PRESETS.custom;
+      return c.enabled && c.lastTestStatus == null && (preset.needsKey ? !!c.apiKey : true) && (preset.needsBaseUrl ? !!c.baseUrl : true);
+    });
+    for (const config of candidates) {
+      try { await testProvider(config); } catch (err) { /* testProvider already records the failure on the config itself */ }
+    }
+  }
+
   function init() {
     loadConfigs(); // ensures Pollinations is pre-registered on first run
+    autoTestUntested(); // fire-and-forget — see its own doc comment
   }
 
   return {
     init, PROVIDER_PRESETS,
     loadConfigs, addProvider, removeProvider, updateProvider,
-    testProvider, pickCandidates, callEdit,
+    testProvider, pickCandidates, callEdit, detectPresetFromKey,
   };
 })();
