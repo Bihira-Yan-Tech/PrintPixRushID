@@ -67,6 +67,62 @@ key-exposure problem without needing a dedicated backend server.
 - **Dola**: turned out to be a consumer chat/image app with unclear
   public image-edit API docs — deliberately NOT given a hardcoded
   integration; available via the generic Custom provider type instead.
+- **OmniRoute** (added after the user asked for it specifically): a
+  self-hosted, open-source AI gateway (`npm i -g omniroute`, default
+  port 20128, OpenAI-compatible `/v1`). Needs a user-supplied `baseUrl`
+  — see Custom-preset-style handling in `modelProviders.js`.
+
+## Real bugs found via live testing with real API keys (Sept 2026)
+All fixed and committed — kept here since they're non-obvious and the
+kind of thing worth not re-discovering:
+1. **Electron's `ai-provider-call` IPC handler always used `require('https')`**
+   regardless of the target URL's protocol — threw `ERR_INVALID_PROTOCOL`
+   for a local `http://localhost:20128` OmniRoute instance. Fixed to
+   pick `http` vs `https` off the URL itself.
+2. **OmniRoute preset double-prefixed `/v1/`** — hardcoded its own
+   `/v1/models` suffix on top of a `baseUrl` the user had already given
+   as `http://localhost:20128/v1`, producing `/v1/v1/models`. Fixed to
+   match the "custom" preset's convention: `baseUrl` is the full API
+   root (OpenAI-SDK-`baseURL`-style), endpoints just append directly.
+3. **The Add Provider form was missing a Base URL field entirely** —
+   the Custom/OmniRoute presets need one (`needsBaseUrl: true`) but
+   `index.html`/`providerSettings.js` never rendered it, so `baseUrl`
+   was always sent as `''`. Added the field + show/hide wiring.
+4. **`api-inference.huggingface.co` (the Hugging Face preset's URL) is
+   fully decommissioned** — doesn't even resolve via DNS anymore.
+   Fixed to `router.huggingface.co`, HF's current Inference Providers
+   gateway. Also fixed the request body, which had `inputs`/
+   `parameters` backwards (was sending the prompt as `inputs` and the
+   image under a made-up `parameters.image` field — real shape is
+   `inputs` = base64 image, `parameters.prompt` = text).
+   **Still not fully solved**: unlike chat completions (a real,
+   working, provider-agnostic route), HF image-to-image has no unified
+   cross-provider endpoint — confirmed via HF's own
+   `inferenceProviderMapping` API that `Qwen/Qwen-Image-Edit` is only
+   hosted by third-party partners (fal-ai/replicate/wavespeed), not
+   HF's own compute, and each partner needs its own undocumented
+   request shape when called via raw HTTP (only their client SDK
+   handles this correctly today). Left as a real, correct route
+   (better than the previously-dead domain) with an honest comment —
+   don't assume Hugging Face works end-to-end without testing the
+   specific model chosen.
+5. **OpenRouter/OmniRoute/Custom presets never set `max_tokens`** —
+   OpenRouter defaults to the model's own maximum for chat completions
+   (observed requesting 58,000+ tokens for some image models), which
+   many accounts' credit balance can't afford even though an image
+   response itself needs nowhere near that many tokens. Surfaced as a
+   confusing `HTTP 402 "requires more credits"` that looked like an
+   account problem but was actually just an oversized default request.
+   Fixed by capping `max_tokens: 4096` on all three presets' edit
+   requests.
+6. Two account-level (not code) blockers hit during testing, both
+   worth remembering as the kind of thing to check first next time:
+   Google AI Studio projects can have `limit: 0` free-tier quota for
+   image-generation models specifically even with a working key
+   (needs billing linked to unlock); OpenRouter returns a misleading
+   `401 "User not found"` (not `402`/a clear credits message) when the
+   account has no credits/payment method — fixed once the user added
+   credits.
 
 ## Architecture
 Real HTTP calls (test + edit) go through a native bridge when
@@ -118,13 +174,19 @@ there's no longer a separate "attire" Fabric object at all.
         Fixed in `formalAttireCommand.js`/`autoEnhance.js` (new
         `job:applied` listener) and `bgRemoval.js` (`syncUI()` now
         also sets `removeBgBtn.disabled`).
-- [ ] **NOT yet verified: an actual successful generation** (the
-      "happy path" — a real provider returning a real edited image).
-      Pollinations (the only zero-setup provider) can't do edits at
-      all (see above) — this needs a real Gemini/OpenRouter/Hugging
-      Face API key, which this session doesn't have. **Get a free key
-      from the user before calling this feature done.**
-- [ ] `git commit` after the happy-path test passes
+- [x] **Happy-path verified — a real successful generation.**
+      Tested with the user's own real Gemini, OpenRouter, and Hugging
+      Face keys (see "Real bugs found via live testing" above for what
+      each one hit and how it was fixed/diagnosed). Gemini blocked by
+      `limit: 0` account quota (needs billing linked); Hugging Face
+      blocked by the third-party-provider routing gap; **OpenRouter
+      succeeded end-to-end** once the user added account credits and
+      the `max_tokens` bug was fixed — clicking "Add Formal Attire" on
+      a test photo produced a real, photorealistic generated image of
+      the subject wearing a formal business suit, confirmed visually
+      (not just a status-text check).
+- [x] `git commit` — done, multiple commits through this whole pass
+      (see git log)
 
 ### Mobile (not started)
 - [ ] Port `modelProviders.js`, `aiAttireAssistant.js`,

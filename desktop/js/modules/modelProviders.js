@@ -163,6 +163,15 @@ const ModelProviders = (() => {
               ],
             }],
             modalities: ['image', 'text'],
+            // Real bug found via testing: without this, OpenRouter
+            // defaults max_tokens to the model's own maximum (seen
+            // requesting ~58,000+ tokens for some image models), which
+            // some accounts' credit balance can't afford even though
+            // an image response itself needs nowhere near that many
+            // tokens — surfaced as a confusing HTTP 402 "requires more
+            // credits" that looks like an account problem but is
+            // actually just an oversized default request.
+            max_tokens: 4096,
           }),
         };
       },
@@ -305,6 +314,7 @@ const ModelProviders = (() => {
             model: modelId,
             messages: [{ role: 'user', content: [{ type: 'text', text: promptText }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
             modalities: ['image', 'text'],
+            max_tokens: 4096, // see OpenRouter preset's comment above — avoids an oversized default request some accounts can't afford
           }),
         };
       },
@@ -354,6 +364,7 @@ const ModelProviders = (() => {
             model: modelId,
             messages: [{ role: 'user', content: [{ type: 'text', text: promptText }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
             modalities: ['image', 'text'],
+            max_tokens: 4096, // see OpenRouter preset's comment above — avoids an oversized default request some accounts can't afford
           }),
         };
       },
