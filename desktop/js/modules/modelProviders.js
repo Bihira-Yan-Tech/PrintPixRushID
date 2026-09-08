@@ -189,13 +189,32 @@ const ModelProviders = (() => {
         // different model id by editing this provider's config later.
         return [{ id: 'Qwen/Qwen-Image-Edit', label: 'Qwen-Image-Edit', free: true }];
       },
+      // KNOWN LIMITATION, found via real testing: `api-inference.huggingface.co`
+      // (this preset's original URL) is fully decommissioned — fixed to
+      // `router.huggingface.co`, HF's current Inference Providers gateway.
+      // BUT: unlike chat completions (a real, working, provider-agnostic
+      // `/v1/chat/completions` route), image-to-image has no such unified
+      // route. Confirmed via `huggingface.co/api/models/Qwen/Qwen-Image-Edit
+      // ?expand[]=inferenceProviderMapping`: this model is only actually
+      // served by third-party partners (fal-ai/replicate/wavespeed), NOT
+      // HF's own "hf-inference" compute (confirmed empty via
+      // `/api/models?pipeline_tag=image-to-image&inference_provider=hf-inference`).
+      // Routing through `router.huggingface.co/fal-ai/models/...` still
+      // returned "Model not supported by provider fal-ai" — each partner
+      // has its own request shape the router expects, not documented for
+      // plain HTTP use (only their client SDK's `imageToImage()` handles
+      // this correctly today). Left as a real HTTP call (not stubbed out
+      // like Pollinations' unfixable case) since the route itself is
+      // real and might work for a different model already hosted on
+      // hf-inference directly — but don't assume this preset works
+      // end-to-end without testing it against the specific model chosen.
       buildEditRequest(apiKey, modelId, promptText, imageDataUrl) {
         const [, , base64] = /^data:([^;]+);base64,(.*)$/.exec(imageDataUrl) || [];
         return {
           method: 'POST',
-          url: `https://api-inference.huggingface.co/models/${modelId}`,
+          url: `https://router.huggingface.co/hf-inference/models/${modelId}`,
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inputs: promptText, parameters: { image: base64 || '' } }),
+          body: JSON.stringify({ inputs: base64 || '', parameters: { prompt: promptText } }),
         };
       },
       parseEditResponse(json, rawBase64) {
@@ -261,8 +280,16 @@ const ModelProviders = (() => {
       // output-capable model it's routing to. `baseUrl` is the user's
       // own OmniRoute instance (self-hosted — there's no single public
       // URL for it).
+      // `baseUrl` is expected to be the API root the same way an
+      // OpenAI-SDK `baseURL` config works (e.g.
+      // `http://localhost:20128/v1`, already including any `/v1`) —
+      // this just appends the endpoint path directly, same convention
+      // as the "custom" preset just below. An earlier version hardcoded
+      // its own `/v1/` prefix here, which doubled up into `/v1/v1/...`
+      // for exactly this kind of base URL — a real bug found via
+      // testing against a real local OmniRoute instance.
       buildTestRequest(apiKey, baseUrl) {
-        return { method: 'GET', url: `${(baseUrl || '').replace(/\/+$/, '')}/v1/models`, headers: { Authorization: `Bearer ${apiKey}` } };
+        return { method: 'GET', url: `${(baseUrl || '').replace(/\/+$/, '')}/models`, headers: { Authorization: `Bearer ${apiKey}` } };
       },
       parseTestResponse(json) {
         const list = (json && json.data) || (Array.isArray(json) ? json : []);
@@ -272,7 +299,7 @@ const ModelProviders = (() => {
       buildEditRequest(apiKey, modelId, promptText, imageDataUrl, baseUrl) {
         return {
           method: 'POST',
-          url: `${(baseUrl || '').replace(/\/+$/, '')}/v1/chat/completions`,
+          url: `${(baseUrl || '').replace(/\/+$/, '')}/chat/completions`,
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: modelId,
