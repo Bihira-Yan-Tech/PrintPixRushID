@@ -38,10 +38,14 @@ WebView file-chooser fix below, which only make sense on `mobile/`).
   `D:\android-sdk`, JDKs under `C:\Program Files\Eclipse Adoptium\`.
 Client-side only. **Fully offline-capable for the core flow** (edit,
 arrange, enhance, export PDF, print) — Fabric.js and jsPDF are
-self-hosted in `vendor/`, not fetched from a CDN. The one feature that
-still needs internet is "Remove Background" (Step 2), which downloads
-an AI model from a CDN the first time it's used — self-hosting that is
-a bigger job (model + WASM runtime assets) and was deliberately left
+self-hosted in `vendor/`, not fetched from a CDN. Two features need
+internet: "Remove Background" (Step 2), which downloads an AI model
+from a CDN the first time it's used, and **Add Formal Attire**, which
+always needs internet — it calls the user's configured AI provider(s)
+over the network for every generation, no local/offline fallback (there
+couldn't be one; that's the whole point of it being a real generative
+model call). Self-hosting Remove Background's model is a bigger job
+(model + WASM runtime assets) and was deliberately left
 out of the offline pass; see Known simplifications.
 
 **"AI Upscale" (TensorFlow.js + UpscalerJS) was removed and replaced
@@ -54,11 +58,24 @@ nothing that can hang — see `js/modules/autoEnhance.js`. It does NOT
 add resolution the way the old upscaler did; it only improves the tone/
 contrast/crispness of the pixels already there.
 
-**AI Eraser and real "auto-fit clothing" (virtual try-on) were asked for
-and deliberately NOT built** — see Known simplifications for why (a
-~225MB model download for the eraser; virtual try-on isn't practically
-client-side/no-backend at all with current tech). "Align to photo" in
-the Formal Attire panel is the honest, non-AI substitute for the latter.
+**AI Eraser was asked for and deliberately NOT built** — see Known
+simplifications for why (a ~225MB model download).
+
+**Real virtual try-on ("Add Formal Attire") — an earlier decision to
+rule this out was later reversed.** The manual overlay/heuristic system
+(a vector illustration or uploaded PNG, dragged/aligned by hand) has
+been **removed entirely** and replaced by a genuine AI image-generation
+pipeline: the user supplies their own free-tier API key for one or more
+AI providers (Gemini, OpenRouter, Hugging Face, etc., managed in the
+**AI Providers** settings panel), and clicking **Add Formal Attire**
+sends the uploaded photo to a real generative image-editing model, which
+returns the same person actually wearing formal attire — not an
+overlay. This works without a dedicated backend server because the
+native-bridge pattern this app already had for Save Job (Electron IPC /
+Android's `AndroidBridge`) solves the CORS/key-exposure problem that
+would otherwise require one. See `js/modules/modelProviders.js`'s own
+top-of-file comment and the Architecture/Known-simplifications sections
+below for the full write-up.
 
 ## How to run
 Just open `index.html` in a browser. No install/build needed, no
@@ -133,54 +150,93 @@ see the Save Job bullet under Known simplifications.
   added to the sheet (or reflected in `idsize:change`) until "Add to
   sheet" is clicked, so mixing sizes (e.g. 2×2 *and* 1×1 on one sheet)
   works without one choice wiping out the other.
-- `js/modules/attireRenderer.js` — renders the default male/female
-  formal-attire illustration **once**, to an offscreen canvas, and caches
-  the PNG data URL (NOT a live per-frame draw function). This is what
-  lets a default attire and a user-uploaded attire PNG go through the
-  same code path in CanvasEditor — both are just image sources for a
-  Fabric object. Also keeps `computeFaceFitCrop()`, reused by the
-  "Auto-fit face" one-shot button.
+- `js/modules/faceFitHeuristic.js` — a small, trimmed survivor of the old
+  `attireRenderer.js` (deleted along with the rest of the manual attire
+  system — see below). Keeps only `computeFaceFitCrop()`, reused by the
+  "Auto-fit face" one-shot button; has nothing to do with attire anymore.
 - `js/modules/canvasEditor.js` — the interactive Edit workspace, built on
   Fabric.js. **Important model change**: the workspace represents *one
   fixed-size reference ID cell* (500×500, always square), not the whole
-  physical sheet — see "Editing model" below for why. Photo and attire
-  are independent Fabric.Image objects (select/drag/resize come free
-  from Fabric's built-in controls); "crop" is just panning/resizing
-  within the workspace's fixed bounds, since Fabric's export only
-  rasterizes what's inside them. Broadcasts a `photo:change` CustomEvent
-  with the flattened photo+attire composite (not the background — see
-  below) on every object move/scale/modify. Also owns a small **Layers
-  list** (Photo / Attire) — clicking a row calls
-  `fabricCanvas.setActiveObject()` directly, which is the fix for "the
-  attire overlaps the photo, I can't click the one I want"; the list also
-  listens for Fabric's own `selection:*` events so it stays in sync when
-  you click an object directly on the canvas instead. Also owns the
-  **Eraser** (`setEraserMode()`/`handleEraseStroke()`) — a plain brush
-  tool, NOT AI/content-aware fill; see Known simplifications for exactly
-  what it does and doesn't do.
+  physical sheet — see "Editing model" below for why. The photo is a
+  single Fabric.Image object (select/drag/resize come free from Fabric's
+  built-in controls); "crop" is just panning/resizing within the
+  workspace's fixed bounds, since Fabric's export only rasterizes what's
+  inside them. Broadcasts a `photo:change` CustomEvent with the
+  flattened photo (not the background — see below) on every object
+  move/scale/modify. There is no longer a second, independently-
+  draggable "attire" Fabric object, no Layers list, and no
+  `setAttireObject()`/`alignAttireToPhoto()`/etc. — that whole system
+  was removed (see "Real virtual try-on" above); a generated formal-
+  attire result replaces the photo's own pixels via `setEnhancedPhoto()`
+  (same mechanism Auto Enhance already used), so there's nothing left to
+  separately position/resize. Also owns the **Eraser**
+  (`setEraserMode()`/`handleEraseStroke()`) — a plain brush tool, NOT
+  AI/content-aware fill; see Known simplifications for exactly what it
+  does and doesn't do.
   **Undo/Redo**: `historyStack` of full `getSaveState()` snapshots
   (capped at `MAX_HISTORY = 20`), not per-field diffs — simplest thing
   that's provably correct given `loadState()` already exists for
-  Save/Recopy. `pushHistory()` fires centrally from `setPhotoObject()`/
-  `setAttireObject()` plus a handful of explicit call sites (background
-  changes, `autoFitFace()`, `alignAttireToPhoto()`, `setAttireEnabled()`,
-  `deleteSelected()`); a separate public `commitHistory()` exists for
-  controls that fire continuously while dragging (the opacity slider) so
-  a history entry is only pushed once, on release, not on every 'input'
-  tick. `undo()`/`redo()` call `loadState(snapshot, {quiet:true})` — the
-  `quiet` option skips the "restored from a saved job" status message and
-  does NOT reset the history stack — then dispatch `editstate:restored`
-  (detail: the restored `getSaveState()`) so `attireControls.js` and
-  `bgRemoval.js` can re-sync their own toggle/swatch DOM, the same event
-  Save/Recopy's Recopy path already needed. Ctrl+Z / Ctrl+Y (or Ctrl+
-  Shift+Z) are wired globally, not just via the two toolbar buttons.
-  **Delete selected layer** (`deleteSelected()`) removes the photo
-  entirely (back to the empty drop-zone) or just disables+clears the
-  attire, depending on which layer is selected in the Layers list.
+  Save/Recopy. `pushHistory()` fires centrally from `setPhotoObject()`
+  plus a handful of explicit call sites (background changes,
+  `autoFitFace()`, `deleteSelected()`). `undo()`/`redo()` call
+  `loadState(snapshot, {quiet:true})` — the `quiet` option skips the
+  "restored from a saved job" status message and does NOT reset the
+  history stack — then dispatch `editstate:restored` (detail: the
+  restored `getSaveState()`) so `bgRemoval.js` can re-sync its own
+  swatch DOM, the same event Save/Recopy's Recopy path already needed.
+  Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) are wired globally, not just via the
+  two toolbar buttons. **Delete selected layer** (`deleteSelected()`)
+  removes the photo entirely, back to the empty drop-zone.
+- `js/modules/modelProviders.js` — the AI provider registry/data layer
+  for **Add Formal Attire**. `PROVIDER_PRESETS` defines each provider's
+  (Gemini, OpenRouter, Hugging Face, Pollinations, Qwen, Groq, OmniRoute,
+  Custom) test/edit request builders and response parsers. CRUD over
+  saved provider configs in `localStorage['printpixRushId.providers']`.
+  `testProvider(config)` does a real "list models" (or minimal probe)
+  call and records `lastTestStatus`. `pickCandidates()` implements
+  "Fill First": tested-working, image-edit-capable providers, free
+  models sorted before paid ones, as a flat ordered list —
+  `aiAttireAssistant.js` tries them one at a time until one succeeds.
+  `detectPresetFromKey()` auto-selects the right provider from the shape
+  of a pasted API key (Gemini/OpenRouter/HuggingFace/Groq key prefixes).
+  `autoTestUntested()` (called from `init()`) fire-and-forget tests any
+  saved provider that has a key but hasn't been tested yet, so a
+  provider added last session shows a correct pass/fail badge without
+  the user manually re-testing it. All real HTTP (test + edit) goes
+  through `callHttp()`, which routes through a native bridge when
+  available (Electron's `ai-provider-call` IPC handler, or Android's
+  `AndroidBridge.callProvider`) — see "Architecture: how AI provider
+  requests actually get made" below — falling back to plain `fetch()`
+  otherwise (browser-tab testing only; not subject to CORS issues there
+  either for most providers, but no guarantee).
+- `js/modules/aiAttireAssistant.js` — the actual "Add Formal Attire"
+  pipeline: `generateFormalAttire(photoImageEl, gender, onProgress)`
+  builds a male/female-specific edit prompt, loops through
+  `ModelProviders.pickCandidates()` calling `ModelProviders.callEdit()`
+  for each until one succeeds, decodes the result into an `Image`, and
+  aggregates every attempt's error into one message if all candidates
+  fail (never a silent/generic failure). `onProgress(status)` lets the
+  UI show "Trying <provider>…" per attempt.
+- `js/modules/formalAttireCommand.js` — the **Command Options** UI in
+  Step 2: a Male/Female gender toggle plus one **Add Formal Attire**
+  button (replaced the old "Formal attire" toggle + illustration/upload/
+  opacity/align controls entirely). Calls
+  `AiAttireAssistant.generateFormalAttire()` then
+  `CanvasEditor.setEnhancedPhoto()` with the result. Listens to both
+  `upload:change` (a brand-new upload) and `job:applied` (a restored
+  job) to enable/disable itself correctly — see the `job:applied`
+  bullet below for why both are needed.
+- `js/modules/providerSettings.js` — the **AI Providers** modal (header
+  button, top-right): add/test/delete provider entries against
+  `ModelProviders`' storage, a preset dropdown wired to show/hide the
+  Base URL field only for presets that need one (`needsBaseUrl`), and a
+  key-input listener that calls `ModelProviders.detectPresetFromKey()`
+  to auto-select the right provider dropdown option as the user pastes
+  a key.
 - `js/modules/livePreview.js` — the Live Preview pane: packs every added
   Step 3 size/quantity onto the sheet with a greedy shelf-packing
   algorithm (see its own comment in the file), draws the chosen
-  background + the flattened photo+attire composite into each cell, plus
+  background + the flattened photo composite into each cell, plus
   cutting guides (toggleable) and the watermark. Mirrors state via
   `pagesetup:change`, `photo:change`, `idsize:change`, `printlayout:change`.
   No manual "generate preview" step — always live, but shows nothing
@@ -241,21 +297,36 @@ see the Save Job bullet under Known simplifications.
   exact hang during testing) between setting the "Enhancing…" UI state
   and running the pixel loop, so the loading state actually paints
   first instead of the button looking dead on a large photo.
-- `js/modules/attireControls.js` — "Formal attire" toggle, Male/Female
-  preset buttons, "Align to photo" (`CanvasEditor.alignAttireToPhoto()`
-  — a heuristic reposition snap, NOT pose-aware auto-fit; see Known
-  simplifications), "Upload your own" custom-attire file input, and the
-  opacity slider; translates UI events into `CanvasEditor.setAttire*()`
-  calls. Does NOT own "Auto-fit face" anymore — that's a one-shot button
-  wired directly in `canvasEditor.js`. Uploaded attire is run through
-  `BgRemoval.removeBackgroundFromFile()` (the same AI model/pipeline
-  used for the main photo's "Remove background", extracted into a
-  reusable function) automatically, with its own `.progress-bar`, so a
-  non-transparent upload still overlays cleanly without the user needing
-  to pre-cut it out themselves. If that fails (e.g. no internet on first
-  use — the model downloads from a CDN), it falls back to using the
-  raw upload as-is with a clear message, rather than blocking the
-  upload entirely.
+### Architecture: how AI provider requests actually get made
+Real HTTP calls (`testProvider`/`callEdit` in `modelProviders.js`) go
+through a native bridge when available, exactly mirroring the pattern
+this app already used for Save Job:
+- **Desktop**: `window.electronAPI.callProvider(request)` →
+  `electron/preload.js`'s bridge → `ipcMain.handle('ai-provider-call', ...)`
+  in `electron/main.js` makes the actual request from Node's own
+  `http`/`https` modules (picked by the URL's protocol), not subject to
+  browser CORS at all.
+- **Mobile**: `window.AndroidBridge.callProvider(requestId, method, url,
+  headersJson, body)` (fire-and-forget, like `saveFileAs`/`writeToUri`)
+  → `MainActivity.java`'s `AndroidBridge.callProvider()` makes the
+  request on its own background `Thread` via `java.net.HttpURLConnection`
+  (never the UI thread — a generation call can take several seconds),
+  then posts the result back to JS via
+  `webView.evaluateJavascript("window.__androidProviderCallback(id, ok,
+  status, body)")`, matched to the original call through `requestId` —
+  same request/callback pattern as the file-save bridge.
+- **Neither bridge present** (plain browser tab): falls back to a direct
+  `fetch()` — used for quick Browser-pane testing, not the shipped apps.
+
+Both bridges base64-encode a response whose `Content-Type` starts with
+`image/` (some providers return raw image bytes instead of JSON) and
+pass plain text through otherwise; `callHttp()`'s own
+`JSON.parse`/`looksLikeBase64()` fallback on the JS side handles either
+shape uniformly regardless of which bridge produced it.
+
+API keys themselves still live in plain `localStorage` (same trust
+model as saved jobs, see the Security note below) — the bridge only
+solves CORS/reliability/background-thread execution, not key storage.
 - `js/modules/printExport.js` — Step 4: sheet margin, cutting-guide
   visibility, tight packing (no gap between cells), and watermark/
   proofing overlay. Emits `printlayout:change`. "Print" and "Export PDF"
@@ -287,9 +358,8 @@ see the Save Job bullet under Known simplifications.
   `setState()`/`loadState()` on Open/Import.
   PageSetup/IdSize/PrintExport each have a `getState()`/`setState()`
   pair; CanvasEditor has `getSaveState()`/`loadState()`;
-  AttireControls/BgRemoval have a cosmetic `syncUI()` each, since they
-  own their own toggle/swatch DOM but not the underlying state
-  (CanvasEditor does). `applyJob()`, `captureCurrentJob()`,
+  BgRemoval has a cosmetic `syncUI()`, since it owns its own swatch DOM
+  but not the underlying state (CanvasEditor does). `applyJob()`, `captureCurrentJob()`,
   `loadJobs()`, and `saveCurrentJob()` are exported for reuse by
   `jobLifecycle.js` — see below. `applyJob()` dispatches a `job:applied`
   event when it finishes, regardless of caller (Open, Import, or
@@ -379,7 +449,7 @@ It stopped making sense once a sheet can hold *multiple different* ID
 sizes (Step 3): there's no single "contain-fit to the sheet" framing
 that works for a 1×1 cell and a 2×2 cell at once. So the Edit workspace
 is now a fixed 500×500 reference frame — always square, matching
-1×1/1.5×1.5/2×2 — that the user frames one photo (+ attire) into once;
+1×1/1.5×1.5/2×2 — that the user frames one photo into once;
 Live Preview/PDF tile copies of that same composition into every cell of
 every added size. Passport/custom non-square sizes still contain-fit the
 composite at render time rather than getting pixel-identical framing —
@@ -402,17 +472,27 @@ a data URL at save time sidesteps that.
 ### Custom events (how modules talk to each other)
 - `job:applied` — fired by `saveRecopy.js`'s `applyJob()` once every
   module has finished restoring (Recopy, Import, or jobLifecycle.js's
-  New/Open Job). No detail payload. jobLifecycle.js is the only listener
-  today — it's what clears the "unsaved changes" dirty flag.
+  New/Open Job). No detail payload. jobLifecycle.js listens to clear the
+  "unsaved changes" dirty flag; `formalAttireCommand.js`/`autoEnhance.js`
+  also listen to re-enable their own button (`bgRemoval.js`'s `syncUI()`
+  does the same for Remove Background) — found as a real bug during
+  testing: those three buttons only ever enabled via `upload:change` (a
+  *brand-new* upload), never on a restored job (autosave/Open Job/
+  Recopy/Import don't fire that event — the original `File` object
+  doesn't survive a save/reload), so all three stayed permanently
+  disabled after "Continue where you left off" despite a photo clearly
+  being loaded.
 - `pagesetup:change` — fired by pageSetup.js whenever paper size/orientation
   changes. detail: `{ key, label, orientation, widthIn, heightIn }`
 - `photo:change` — fired by canvasEditor.js on every object move/scale/
   modify. detail: `{ image, background }` — `image` is the flattened
-  photo+attire composite (an `HTMLCanvasElement`, or `null` if no photo),
-  `background` is `{ mode, color, image, imageDataUrl }`. No more `zoom`/
-  `attire`/`faceFit` fields — those are baked into `image` upstream now.
+  photo (an `HTMLCanvasElement`, or `null` if no photo), `background` is
+  `{ mode, color, image, imageDataUrl }`. No more `zoom`/`attire`/
+  `faceFit` fields — those are baked into `image` upstream now.
 - `upload:change` — fired by canvasEditor.js when a *new* file is loaded
-  (used by bgRemoval.js / attireControls.js to reset their own UI state)
+  (used by bgRemoval.js/autoEnhance.js/formalAttireCommand.js to reset
+  their own UI state — see the `job:applied` bullet above for why a
+  *restored* job needs its own separate listener for the same thing)
 - `idsize:change` — fired by idSize.js whenever the size-entry list or
   name tag changes. detail: `{ entries, nameTag }` where `entries` is
   `[{ widthIn, heightIn, quantity }, ...]` (empty until something's been
@@ -447,11 +527,12 @@ a data URL at save time sidesteps that.
   for any dialog/overlay in this app.
 - `.progress-bar` / `.progress-bar-fill` — a small reusable component for
   "this button triggers a real download/computation" feedback. Used by
-  bgRemoval.js (`removeBgProgress`) and attireControls.js's upload
-  bg-removal, plus autoEnhance.js's `enhanceProgress` (which doesn't
-  have real percentage data to show, unlike a model download — it just
-  jumps to ~55% then 0% as a lightweight "something is happening"
-  indicator, not a dishonest fake percentage).
+  bgRemoval.js (`removeBgProgress`), autoEnhance.js's `enhanceProgress`
+  (which doesn't have real percentage data to show, unlike a model
+  download — it just jumps to ~55% then 0% as a lightweight "something
+  is happening" indicator, not a dishonest fake percentage), and
+  formalAttireCommand.js's own progress bar while a generation request
+  is in flight.
 
 ### Known simplifications (be upfront about these, don't silently "fix"
 ### them into looking more sophisticated than they are)
@@ -467,21 +548,25 @@ a data URL at save time sidesteps that.
   left), applied as a *one-shot* snap (a button, not a live toggle) that
   the user can then fine-tune by dragging. Labeled as approximate in the
   UI hint text on purpose.
-- **Formal attire** default illustrations are refined vector art
-  (gradients, lapels, buttons for some dimension) — still not a photo of
-  real clothing. A user who wants a realistic look uploads their own
-  transparent PNG instead (no validation that it's actually transparent
-  — just a hint telling them to use one).
-- **"Align to photo"** (attire) is a position-only heuristic snap
-  (horizontal-center-on-photo + a fixed 60%-down vertical anchor) — it
-  does NOT detect the person's actual shoulders/pose. Real automatic
-  garment-fitting ("virtual try-on") was explicitly asked for and
-  explicitly not built: the realistic versions of that technology are
-  diffusion-based generative models that run server-side even in
-  production (5-17s per generation on a GPU) — not something a static,
-  no-backend HTML/JS app can run client-side. Doing this for real would
-  mean a paid third-party API (e.g. FASHN) plus adding an actual backend
-  to hold the API key, which is a different kind of project than this one.
+- **Add Formal Attire depends entirely on the user's own configured AI
+  provider(s)** — there is no built-in/guaranteed-working provider. If
+  no provider is added, or none tested successfully, the button fails
+  with a clear message pointing at **AI Providers** rather than silently
+  doing nothing or degrading to an old-style overlay (that system no
+  longer exists at all). Generation quality/speed/cost are entirely the
+  chosen provider's, not something this app controls — this app just
+  sends the photo + a prompt and displays whatever image comes back.
+  **Pollinations** (pre-registered, no key needed) can validate a
+  provider Test/model-list, but its actual image-edit endpoint needs a
+  *publicly hosted* image URL, which this no-backend app cannot supply
+  — its `buildEditRequest()` throws an immediate, honest error instead
+  of attempting a call that's guaranteed to fail silently. **Hugging
+  Face** image-edit routing to third-party partners (fal-ai/replicate/
+  wavespeed) is best-effort — each partner needs its own undocumented
+  request shape when called via raw HTTP, so a specific model may not
+  work even though the provider's own key/connection test passes. See
+  `modelProviders.js`'s own top-of-file comment for the full per-
+  provider write-up (what's confidently correct vs. best-effort).
 - **Auto Enhance** is auto-contrast + saturation + sharpen — it does NOT
   add resolution or recover detail that was never captured, unlike the
   AI Upscale feature it replaced. Quality gains are modest and
@@ -560,8 +645,8 @@ a data URL at save time sidesteps that.
 - **Undo/Redo** snapshots the *entire* editable state on every change
   (capped at the last 20), not per-field diffs — simple and provably
   correct (it's the same serialization Save/Recopy already relies on),
-  but means every undo step is a full photo+attire+background snapshot
-  in memory, not a lightweight command log. Fine at this app's scale
+  but means every undo step is a full photo+background snapshot in
+  memory, not a lightweight command log. Fine at this app's scale
   (single active job, capped history), would need rethinking for a
   much bigger editable document.
 - **Delete selected layer** removes the photo entirely (back to the
@@ -605,15 +690,16 @@ a data URL at save time sidesteps that.
   resolution of the uploaded source photo.
 - **Save Job (Step 5)** keeps a local list in plain `localStorage` — no
   encryption, and no cap on how many jobs you save until the browser
-  quota (typically ~5-10MB) is hit. Photos/attire are downscaled before
-  being stored (1600px photo, 1200px attire, longest edge) to keep jobs
-  reasonably sized. A restored job's original `File` object doesn't
-  survive the round trip (only the flattened image does), so "Remove
-  Background" needs a fresh photo upload to run again after opening a
-  job — the photo/attire *position and scale* do survive, though
-  (hand-rolled transform serialization, see "Editing model" above), so a
-  restored job is still fully editable, not frozen into one flat
-  picture.
+  quota (typically ~5-10MB) is hit. The photo is downscaled before being
+  stored (1600px longest edge) to keep jobs reasonably sized — this
+  includes an AI-generated Add Formal Attire result, since it replaces
+  the photo's own pixels rather than being stored separately. A restored
+  job's original `File` object doesn't survive the round trip (only the
+  flattened image does), so "Remove Background" needs a fresh photo
+  upload to run again after opening a job — the photo's *position and
+  scale* do survive, though (hand-rolled transform serialization, see
+  "Editing model" above), so a restored job is still fully editable, not
+  frozen into one flat picture.
   **True cross-computer portability** is most reliable on `desktop/`
   (Electron's own native Save dialog, see "File saving priority order"
   above and "Desktop app (Electron)" below — always available in the
@@ -659,19 +745,19 @@ and/or an explicit retention policy if this goes beyond prototype use.
 1. Page Setup: orientation + 9 paper size presets (2R/3R/4R/5R/6R/8R,
    A4, Letter, Legal)
 2. Upload & Edit: drag-drop/file-picker upload, select/drag/resize the
-   photo *and* the attire independently (Fabric.js), a **Layers list**
-   to select one when they overlap plus **Delete selected layer**, a
-   plain brush **Eraser** with a visible on-canvas brush-size cursor
-   (punches to transparent — not AI/content-aware, see Known
-   simplifications), **Undo/Redo** (Ctrl+Z/Ctrl+Y, full-state
-   snapshots), **Auto Enhance** (plain Canvas 2D auto-contrast/
-   saturation/sharpen — see the `autoEnhance.js` bullet above), remove
-   background (also with a real download-percentage progress bar),
-   change background (solid/custom/transparent), formal attire (default
-   illustrations or your own transparent PNG upload — auto-run through
-   background removal on upload so it overlays cleanly even if it wasn't
-   already transparent — plus an "Align to photo" reposition snap —
-   behind the "Formal attire" toggle, see Known simplifications),
+   photo (Fabric.js), **Delete selected layer**, a plain brush **Eraser**
+   with a visible on-canvas brush-size cursor (punches to transparent —
+   not AI/content-aware, see Known simplifications), **Undo/Redo**
+   (Ctrl+Z/Ctrl+Y, full-state snapshots), **Auto Enhance** (plain Canvas
+   2D auto-contrast/saturation/sharpen — see the `autoEnhance.js` bullet
+   above), remove background (also with a real download-percentage
+   progress bar), change background (solid/custom/transparent),
+   **Command Options** — a Male/Female toggle plus **Add Formal Attire**,
+   which sends the photo to the user's own configured AI provider(s) to
+   generate them actually wearing formal attire (see the "Real virtual
+   try-on" writeup near the top and the `modelProviders.js`/
+   `aiAttireAssistant.js`/`formalAttireCommand.js` bullets above — this
+   replaced the old manual overlay/"Align to photo" system entirely),
    auto-fit face (one-shot heuristic), workspace zoom (Photoshop-style —
    zooms the view, not the photo)
 3. Live Preview: packs every added ID size onto the sheet with
@@ -693,8 +779,8 @@ and/or an explicit retention policy if this goes beyond prototype use.
    on first use) from the same screen. Wired into Live Preview via
    `printlayout:change`.
 6. Step 5 — Save Job: saves the whole job (page setup, ID size
-   entries/name tag, print layout, photo edit incl. photo/attire
-   position+scale) both to a `localStorage` list AND, via a native Save
+   entries/name tag, print layout, photo edit incl. photo position+scale)
+   both to a `localStorage` list AND, via a native Save
    dialog where supported (Chrome/Edge), as a real portable .json file —
    plus "Import job .json" to open one on any computer running the app.
    Each list entry re-saves in place with a confirm step ("Save"), or
@@ -706,18 +792,30 @@ and/or an explicit retention policy if this goes beyond prototype use.
    button stays in the header afterward — clicking it warns (Cancel /
    Discard / Save & New) if the workspace has unsaved changes before
    clearing back to blank.
+8. **AI Providers settings panel** (header button, top-right): add/test/
+   delete provider API keys (Gemini, OpenRouter, Hugging Face,
+   Pollinations, Qwen, Groq, OmniRoute, or a generic Custom/OpenAI-
+   compatible endpoint), live "Test" with real model discovery, key-
+   format auto-detection (paste a key, the right provider preset
+   auto-selects), and auto-test-on-boot for any saved provider that
+   hasn't been tested yet. See `modelProviders.js`/`providerSettings.js`
+   bullets above.
 
 **Not started yet:**
 - **AI Eraser** (real content-aware inpainting/object removal, as
   distinct from the plain brush Eraser that IS built) — deferred, not
   forgotten; see Known simplifications for the concrete ~225MB size
   reason.
-- **Real virtual try-on** (AI auto-fitting clothing onto the person's
-  actual pose) — explicitly ruled out for this app's architecture; see
-  Known simplifications. "Align to photo" (non-AI heuristic) is the
-  substitute that was built instead.
-- General opacity control (not just attire), keyboard shortcuts beyond
-  Ctrl+Z/Y, alignment/snapping guides, flip/rotate, tooltips
+- Keyboard shortcuts beyond Ctrl+Z/Y, alignment/snapping guides,
+  flip/rotate, tooltips
+- A fully-autonomous "search the web for a provider's current API docs
+  and patch its request logic without human approval" system was asked
+  for as an extension of Add Formal Attire's provider auto-testing —
+  judged technically infeasible/unsafe for a static, no-build-step app
+  (nothing here can safely rewrite and reload its own source at
+  runtime) and not built; auto-detect-provider-from-key-format and
+  auto-test-on-boot (both real, see above) were built as the safer,
+  bounded alternative instead.
 
 ## Standalone bundle (for mobile testing)
 There's a script pattern used earlier in this project to inline
@@ -1059,6 +1157,35 @@ native code, added as a small JS-to-Java bridge:
     browser `@page` CSS path, just via Android's print framework;
     "Save as PDF" (built into Android, always available) is guaranteed
     to respect it.
+  - `callProvider(requestId, method, url, headersJson, body)` — added
+    for the AI Formal-Attire Assistant (see `modelProviders.js` above).
+    Same "browser fetch() is subject to CORS/WebView restrictions, a
+    native HTTP client isn't" reasoning as `printImage`/`saveFileAs`,
+    just for outbound AI-provider API calls instead. Makes the real
+    request via `java.net.HttpURLConnection` on its **own background
+    `Thread`** (not the WebView JS-bridge thread `addJavascriptInterface`
+    methods normally run on, and never the UI thread) since a generation
+    request can take several seconds — blocking either of those would
+    freeze the page or the app. Posts the result back via
+    `webView.evaluateJavascript("window.__androidProviderCallback(id,
+    ok, status, body)")` on the UI thread, matched to the original call
+    through `requestId` — mirrors `saveFileAs`/`writeToUri`'s
+    request/callback pattern exactly. A response whose `Content-Type`
+    starts with `image/` is base64-encoded before being sent back (some
+    providers return raw image bytes instead of JSON); everything else
+    is passed through as plain text — same convention as Electron's own
+    `ai-provider-call` IPC handler, so `modelProviders.js`'s
+    `callHttp()` handles either bridge's result identically.
+    **Known gap, not yet hit in practice**: `AndroidManifest.xml` sets
+    `android:usesCleartextTraffic="false"`, which blocks plain
+    (non-TLS) `http://` requests app-wide — a provider configured with
+    a plain-HTTP Base URL (e.g. a self-hosted OmniRoute instance) would
+    fail here even though the same request works fine through Electron.
+    Every provider preset actually shipped/tested (Gemini, OpenRouter,
+    Hugging Face, Pollinations) uses `https://`, so this hasn't been a
+    real problem yet; would need a network security config exception
+    (or asking the user to use an `https://` tunnel to their local
+    server) if a plain-HTTP custom provider is ever needed on mobile.
 - `js/modules/printExport.js` and `js/modules/saveRecopy.js` (mobile
   copies only) each have a small `hasAndroidBridge()`/local
   `blobToBase64()` helper and check `window.AndroidBridge` before their
@@ -1245,12 +1372,15 @@ handy:
   `adb install -r manual-apk\build\PrintPixRushID-signed.apk` then
   `adb shell am start -n com.printpixrushid.app/.MainActivity`.
 - `adb logcat` (optionally piped through `findstr`/`grep` for
-  `chromium`/the app's own `console.log` output, which WebView surfaces
-  through `WebChromeClient.onConsoleMessage` — not overridden yet, so
-  JS console output doesn't currently reach `adb logcat`; add that
-  override to `MainActivity.java` if deeper JS-side debugging is needed
-  later) is the way to see what's actually happening on-device instead
-  of guessing from build success alone.
+  `chromium`) is the way to see what's actually happening on-device
+  instead of guessing from build success alone. **Correction to an
+  earlier note in this file**: JS console output (`console.log`/error/
+  warn, and uncaught JS exceptions) DOES reach `adb logcat` by default,
+  even without overriding `WebChromeClient.onConsoleMessage` — it shows
+  up as `chromium: [INFO:CONSOLE(...)]` entries. Confirmed via real
+  self-test output during a later testing pass (this file previously,
+  incorrectly, said the opposite — don't trust that old claim if you
+  see it repeated elsewhere in old notes/commit messages).
 
 **This emulator is unreliable in this dev environment** — worth knowing
 before trusting a "works on the emulator" result, or spending time

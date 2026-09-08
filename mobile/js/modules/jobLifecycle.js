@@ -15,11 +15,10 @@
  *    covers both instead of duplicating it.
  *
  * "Blank" is a hand-built job template (BLANK_JOB below), not a live
- * capture of each module's state at boot — capturing live would race
- * against CanvasEditor's async default-attire load. The values mirror
- * each module's own hardcoded defaults (PageSetup's '4r'/portrait,
- * IdSize's empty entries list, PrintExport's 0.2in margin, etc.) — if
- * those defaults ever change, update BLANK_JOB to match.
+ * capture of each module's state at boot. The values mirror each
+ * module's own hardcoded defaults (PageSetup's '4r'/portrait, IdSize's
+ * empty entries list, PrintExport's 0.2in margin, etc.) — if those
+ * defaults ever change, update BLANK_JOB to match.
  *
  * Applying "New"/"Open" reuses SaveRecopy.applyJob() — the exact same
  * restore path Recopy/Import already use — rather than teaching every
@@ -64,11 +63,6 @@ const JobLifecycle = (() => {
     photo: {
       photoDataUrl: null,
       photoTransform: null,
-      attireEnabled: false,
-      attireOpacity: 1,
-      attireSourceKey: 'male',
-      attireCustomDataUrl: null,
-      attireTransform: null,
       background: { mode: 'none', color: '#FFFFFF', imageDataUrl: null },
     },
   };

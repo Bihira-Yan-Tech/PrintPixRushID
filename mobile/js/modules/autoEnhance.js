@@ -201,6 +201,16 @@ const AutoEnhance = (() => {
       enhanceBtn.disabled = false;
       setLoading(false, defaultHintText);
     });
+    // 'upload:change' only fires for a brand-new upload — a restored job
+    // (autosave/Open Job/Recopy/Import) never fires it (the original
+    // File doesn't survive a save/reload), so this button stayed
+    // permanently disabled after a restore despite a photo clearly being
+    // loaded. Found via testing while building the AI Formal Attire
+    // Assistant (same bug hit that button too — see formalAttireCommand.js).
+    document.addEventListener('job:applied', () => {
+      enhanceBtn.disabled = !CanvasEditor.getPhotoElement();
+      setLoading(false, defaultHintText);
+    });
   }
 
   return { init };

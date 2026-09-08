@@ -18,26 +18,33 @@
  * the flattened composite at render time in LivePreview — not pixel-
  * identical framing across mismatched aspect ratios, but no distortion.
  *
- * Photo and attire are independent Fabric.Image objects — select, drag,
- * and resize come for free from Fabric's built-in object controls, no
- * hand-rolled hit-testing. "Crop" is just: the workspace canvas only
- * rasterizes what's inside its own fixed bounds (via Fabric's
- * toCanvasElement()), so panning/resizing the photo *is* the crop — same
- * interaction model as most ID-photo / social apps, no separate marquee
- * crop tool.
+ * The photo is a single Fabric.Image object — select, drag, and resize
+ * come for free from Fabric's built-in object controls, no hand-rolled
+ * hit-testing. "Crop" is just: the workspace canvas only rasterizes
+ * what's inside its own fixed bounds (via Fabric's toCanvasElement()),
+ * so panning/resizing the photo *is* the crop — same interaction model
+ * as most ID-photo / social apps, no separate marquee crop tool.
+ *
+ * There used to be a second, independently-draggable "attire" Fabric
+ * object (a vector illustration or an uploaded PNG, manually aligned) —
+ * removed in favor of AiAttireAssistant, which calls a real AI image
+ * provider to generate the person actually wearing formal attire and
+ * replaces the photo's own pixels with the result (same mechanism as
+ * Auto Enhance's setEnhancedPhoto()), so there's nothing left to
+ * separately position/resize. See CLAUDE.md.
  *
  * "Workspace zoom" (the zoom slider/buttons) scales the whole canvas view
  * — like Photoshop's canvas zoom — via Fabric's setZoom() *combined with*
  * growing the canvas element's actual DOM size, so the existing
  * `.stage-scroll` (overflow:auto) container can pan it with native
- * scrollbars. It does not change the photo/attire's framing — only drag
- * and resize do that.
+ * scrollbars. It does not change the photo's framing — only drag and
+ * resize do that.
  *
  * Background (solid color / custom image / "not chosen yet" checkerboard)
  * stays outside Fabric entirely — it's applied as CSS on #sheetFrame,
  * behind the (transparent) Fabric canvas. That's deliberate: it means
- * Fabric's toCanvasElement() naturally captures ONLY the photo+attire
- * composite (no background baked in), which is exactly what gets
+ * Fabric's toCanvasElement() naturally captures ONLY the photo itself
+ * (no background baked in), which is exactly what gets
  * broadcast via "photo:change" — LivePreview/PDF export re-draw the
  * background per-cell at each cell's actual pixel size for quality,
  * instead of it being baked into one fixed-resolution bitmap.
@@ -55,7 +62,7 @@ const CanvasEditor = (() => {
   let fabricCanvas;
   let sheetFrame, dropHint, zoomLabelText, statusDot, statusText;
   let replaceBtn, zoomRange, zoomOutBtn, zoomInBtn, zoomFitBtn, autoFitBtn, uploadHint;
-  let layerPhotoBtn, layerAttireBtn, deleteLayerBtn;
+  let deleteLayerBtn;
   let eraserBtn, eraserBtnText, eraserControls, eraserSizeRange;
   let undoBtn, redoBtn;
 
@@ -68,15 +75,9 @@ const CanvasEditor = (() => {
   let restoringHistory = false; // guards against undo/redo itself pushing a new history entry
 
   let photoObj = null;   // Fabric.Image | null — the framed photo
-  let attireObj = null;  // Fabric.Image | null — the attire overlay
   let originalFile = null; // File | null — kept for the bg-removal model input
   let cutout = null;       // HTMLImageElement | null — transparent PNG result, if bg was removed
   let viewZoom = 1;
-
-  let attireEnabled = false;
-  let attireOpacity = 1;
-  let attireSourceKey = 'male'; // 'male' | 'female' | 'custom'
-  let attireCustomDataUrl = null;
 
   let background = { mode: 'none', color: '#FFFFFF', image: null, imageDataUrl: null };
   // mode: 'none' (checkerboard once a cutout exists, else plain white) | 'color' | 'image'
@@ -94,8 +95,6 @@ const CanvasEditor = (() => {
     zoomFitBtn = document.getElementById('zoomFitBtn');
     autoFitBtn = document.getElementById('autoFitBtn');
     uploadHint = document.getElementById('uploadHint');
-    layerPhotoBtn = document.getElementById('layerPhotoBtn');
-    layerAttireBtn = document.getElementById('layerAttireBtn');
     eraserBtn = document.getElementById('eraserBtn');
     eraserBtnText = document.getElementById('eraserBtnText');
     eraserControls = document.getElementById('eraserControls');
@@ -105,22 +104,17 @@ const CanvasEditor = (() => {
     redoBtn = document.getElementById('redoBtn');
   }
 
-  // ---- Fabric object stacking helpers (method names moved between
+  // ---- Fabric object stacking helper (method name moved between
   // Fabric major versions — fall back defensively rather than assume). ----
   function sendToBack(obj) {
     if (!obj) return;
     if (typeof fabricCanvas.sendObjectToBack === 'function') fabricCanvas.sendObjectToBack(obj);
     else if (typeof fabricCanvas.sendToBack === 'function') fabricCanvas.sendToBack(obj);
   }
-  function bringToFront(obj) {
-    if (!obj) return;
-    if (typeof fabricCanvas.bringObjectToFront === 'function') fabricCanvas.bringObjectToFront(obj);
-    else if (typeof fabricCanvas.bringToFront === 'function') fabricCanvas.bringToFront(obj);
-  }
 
   function initFabricCanvas() {
     fabricCanvas = new fabric.Canvas('sheetCanvas', {
-      selection: false, // only the photo/attire are ever selectable — no marquee-select needed
+      selection: false, // only the photo is ever selectable — no marquee-select needed
       preserveObjectStacking: true,
     });
     fabricCanvas.setDimensions({ width: WORK_SIZE, height: WORK_SIZE });
@@ -135,8 +129,7 @@ const CanvasEditor = (() => {
     fabricCanvas.on('object:scaling', queueBroadcast);
     fabricCanvas.on('object:modified', broadcastChange);
 
-    // Keep the Layers list in sync when the user selects an object
-    // directly on the canvas (click/tap), not just via the list itself.
+    // Keep "Delete photo" enabled/disabled in sync with selection.
     fabricCanvas.on('selection:created', syncLayerButtons);
     fabricCanvas.on('selection:updated', syncLayerButtons);
     fabricCanvas.on('selection:cleared', syncLayerButtons);
@@ -148,62 +141,27 @@ const CanvasEditor = (() => {
     fabricCanvas.on('mouse:out', hideEraserCursor);
   }
 
-  // ---- Layers list (Photo / Attire) ----
-  // Solves "attire overlaps the photo, hard to click the one I want" —
-  // picking a layer here selects that exact object, no hit-testing
-  // guesswork needed.
-
-  function selectLayer(key) {
-    const target = key === 'attire' ? attireObj : photoObj;
-    if (!target) return;
-    if (eraserActive) setEraserMode(false);
-    fabricCanvas.setActiveObject(target);
-    fabricCanvas.requestRenderAll();
-    syncLayerButtons();
-  }
-
   function syncLayerButtons() {
     const active = fabricCanvas.getActiveObject();
-    layerPhotoBtn.classList.toggle('is-active', !!photoObj && active === photoObj);
-    layerAttireBtn.classList.toggle('is-active', !!attireObj && active === attireObj);
-    layerPhotoBtn.disabled = !photoObj;
-    layerAttireBtn.disabled = !attireObj || !attireEnabled;
     deleteLayerBtn.disabled = !active;
-    deleteLayerBtn.querySelector('#deleteLayerBtnText').textContent =
-      active === attireObj ? 'Delete attire' : 'Delete selected layer';
   }
 
   function wireLayerControls() {
-    layerPhotoBtn.addEventListener('click', () => selectLayer('photo'));
-    layerAttireBtn.addEventListener('click', () => selectLayer('attire'));
     deleteLayerBtn.addEventListener('click', deleteSelected);
   }
 
-  /**
-   * "Delete" for the currently-selected layer. Deleting the photo removes
-   * it entirely (back to the empty drop-zone, same as never having
-   * uploaded). The attire object always structurally exists in this
-   * app's model (there's always a default male/female bitmap loaded,
-   * just hidden when off) — so "delete attire" is really "turn the
-   * overlay off", which `attire:deleted` tells attireControls.js to
-   * reflect in its own toggle UI.
-   */
+  /** Removes the photo entirely (back to the empty drop-zone, same as never having uploaded). */
   function deleteSelected() {
     const active = fabricCanvas.getActiveObject();
-    if (!active) return;
+    if (!active || active !== photoObj) return;
 
-    if (active === photoObj) {
-      fabricCanvas.remove(photoObj);
-      photoObj = null;
-      originalFile = null;
-      cutout = null;
-      updateDomForPhotoPresence();
-      setStatus(false, 'No image loaded');
-      uploadHint.textContent = 'Upload a photo to begin editing.';
-    } else if (active === attireObj) {
-      setAttireEnabled(false);
-      document.dispatchEvent(new CustomEvent('attire:deleted'));
-    }
+    fabricCanvas.remove(photoObj);
+    photoObj = null;
+    originalFile = null;
+    cutout = null;
+    updateDomForPhotoPresence();
+    setStatus(false, 'No image loaded');
+    uploadHint.textContent = 'Upload a photo to begin editing.';
 
     fabricCanvas.discardActiveObject();
     fabricCanvas.requestRenderAll();
@@ -242,13 +200,13 @@ const CanvasEditor = (() => {
   }
 
   /**
-   * Notifies attireControls.js / bgRemoval.js to re-sync their own
-   * toggle/swatch DOM after a history jump — loadState() only restores
-   * the Fabric objects + internal state, same as it does for Save/Recopy
-   * (which separately calls AttireControls.syncUI() / BgRemoval.syncUI()
-   * right after CanvasEditor.loadState() — see saveRecopy.js). Undo/redo
-   * needs that same follow-up, just via an event instead of a direct
-   * call, since canvasEditor.js doesn't reference those modules directly.
+   * Notifies bgRemoval.js to re-sync its own swatch DOM after a history
+   * jump — loadState() only restores the Fabric objects + internal
+   * state, same as it does for Save/Recopy (which separately calls
+   * BgRemoval.syncUI() right after CanvasEditor.loadState() — see
+   * saveRecopy.js). Undo/redo needs that same follow-up, just via an
+   * event instead of a direct call, since canvasEditor.js doesn't
+   * reference that module directly.
    */
   function notifyHistoryRestored() {
     document.dispatchEvent(new CustomEvent('editstate:restored', { detail: getSaveState() }));
@@ -424,10 +382,7 @@ const CanvasEditor = (() => {
     const mult = EXPORT_MULTIPLIER;
     const size = WORK_SIZE * mult;
 
-    const prevAttireVisible = attireObj ? attireObj.visible : false;
-
     const { beforeCanvas, maskCanvas } = withNeutralZoom(() => {
-      if (attireObj) attireObj.set('visible', false);
       pathObj.set('visible', false);
       const before = fabricCanvas.toCanvasElement(mult);
 
@@ -436,7 +391,6 @@ const CanvasEditor = (() => {
       const mask = fabricCanvas.toCanvasElement(mult);
 
       photoObj.set('visible', true);
-      if (attireObj) attireObj.set('visible', prevAttireVisible);
       return { beforeCanvas: before, maskCanvas: mask };
     });
 
@@ -454,7 +408,7 @@ const CanvasEditor = (() => {
     setPhotoObject(img, { left: 0, top: 0, scaleX: 1 / mult, scaleY: 1 / mult, angle: 0 }); // pushes history itself
   }
 
-  /** Flattens photo+attire (NOT the background swatch) to an offscreen canvas. */
+  /** Flattens the photo (NOT the background swatch) to an offscreen canvas. */
   function flattenComposite() {
     return withNeutralZoom(() => fabricCanvas.toCanvasElement(EXPORT_MULTIPLIER));
   }
@@ -582,12 +536,6 @@ const CanvasEditor = (() => {
     return typeof photoObj.getElement === 'function' ? photoObj.getElement() : photoObj._element;
   }
 
-  /** Same idea as getPhotoElement(), for the attire object — used by AttireEnhance. */
-  function getAttireElement() {
-    if (!attireObj) return null;
-    return typeof attireObj.getElement === 'function' ? attireObj.getElement() : attireObj._element;
-  }
-
   /**
    * Swaps in a processed version of the current photo (from Auto
    * Enhance) while keeping the exact same on-canvas framing. Auto
@@ -614,7 +562,7 @@ const CanvasEditor = (() => {
   function autoFitFace() {
     if (!photoObj) return;
     const el = getPhotoElement();
-    const { sx, sy, sw } = AttireRenderer.computeFaceFitCrop(el, WORK_SIZE, WORK_SIZE);
+    const { sx, sy, sw } = FaceFitHeuristic.computeFaceFitCrop(el, WORK_SIZE, WORK_SIZE);
     const scale = WORK_SIZE / sw;
     photoObj.set({ scaleX: scale, scaleY: scale, left: -sx * scale, top: -sy * scale });
     photoObj.setCoords();
@@ -623,141 +571,7 @@ const CanvasEditor = (() => {
     pushHistory();
   }
 
-  // ---- Attire object ----
-
-  function setAttireObject(fabricImg, transform) {
-    if (attireObj) fabricCanvas.remove(attireObj);
-    fabricImg.set({
-      selectable: true, hasControls: true, hasBorders: true,
-      originX: 'left', originY: 'top',
-      opacity: attireOpacity,
-      visible: attireEnabled,
-    });
-    if (transform) {
-      fabricImg.set(transform);
-    } else {
-      const scale = Math.min(WORK_SIZE / fabricImg.width, WORK_SIZE / fabricImg.height);
-      fabricImg.set({
-        scaleX: scale,
-        scaleY: scale,
-        left: (WORK_SIZE - fabricImg.width * scale) / 2,
-        top: WORK_SIZE - fabricImg.height * scale,
-      });
-    }
-    attireObj = fabricImg;
-    fabricCanvas.add(attireObj);
-    bringToFront(attireObj);
-    // Auto-select so resize handles are right there — the whole point of
-    // uploading/switching attire is usually to immediately reposition it.
-    if (attireEnabled) fabricCanvas.setActiveObject(attireObj);
-    fabricCanvas.requestRenderAll();
-    syncLayerButtons();
-    broadcastChange();
-    pushHistory();
-  }
-
-  function loadAttireSource(sourceKey, dataUrl, transform) {
-    attireSourceKey = sourceKey;
-    return fabric.Image.fromURL(dataUrl).then((img) => setAttireObject(img, transform));
-  }
-
-  function setAttireGender(gender) {
-    const key = gender === 'female' ? 'female' : 'male';
-    loadAttireSource(key, AttireRenderer.getDefaultAttireDataUrl(key), null);
-  }
-
-  function setAttireCustomImage(dataUrl) {
-    attireCustomDataUrl = dataUrl;
-    loadAttireSource('custom', dataUrl, null);
-  }
-
-  /**
-   * Positions the attire against the photo. Tries real shoulder
-   * detection first (PoseDetection.detectShoulders — CDN-loaded on
-   * first use); a `null` result (no internet yet, model load error, or
-   * no person detected confidently) is routine, not an error, and falls
-   * back to the original position-only heuristic (centered + 60%-down)
-   * unchanged. Returns `true` if pose detection actually ran, so
-   * attireControls.js can show an honest "positioned using detected
-   * shoulders" vs. "positioned using the estimate" hint — never claim
-   * more precision than what actually happened.
-   */
-  async function alignAttireToPhoto() {
-    if (!photoObj || !attireObj) return false;
-    const photoW = photoObj.width * photoObj.scaleX;
-    const photoH = photoObj.height * photoObj.scaleY;
-
-    const shoulders = await PoseDetection.detectShoulders(getPhotoElement());
-    let usedPoseDetection = false;
-
-    if (shoulders) {
-      usedPoseDetection = true;
-      // A jacket/blazer's visible width at the shoulder line runs
-      // slightly wider than the bare anatomical shoulder measurement
-      // (padding/structure) — 1.15x is a reasonable approximation, not
-      // a calibrated fit; the user can still drag/resize afterward.
-      const GARMENT_WIDTH_FACTOR = 1.15;
-      const desiredWidth = shoulders.shoulderWidth * photoW * GARMENT_WIDTH_FACTOR;
-      const scale = desiredWidth / attireObj.width;
-      const centerX = photoObj.left + shoulders.centerX * photoW;
-      const shoulderTopY = photoObj.top + shoulders.shoulderY * photoH;
-
-      attireObj.set({
-        scaleX: scale,
-        scaleY: scale,
-        left: centerX - (attireObj.width * scale) / 2,
-        top: shoulderTopY,
-      });
-    } else {
-      const photoCenterX = photoObj.left + photoW / 2;
-      const attireW = attireObj.width * attireObj.scaleX;
-      attireObj.set({
-        left: photoCenterX - attireW / 2,
-        top: photoObj.top + photoH * 0.60,
-      });
-    }
-
-    attireObj.setCoords();
-    fabricCanvas.setActiveObject(attireObj);
-    fabricCanvas.requestRenderAll();
-    syncLayerButtons();
-    broadcastChange();
-    pushHistory();
-    return usedPoseDetection;
-  }
-
-  function setAttireEnabled(enabled) {
-    attireEnabled = enabled;
-    if (attireObj) {
-      attireObj.set('visible', enabled);
-      if (enabled) fabricCanvas.setActiveObject(attireObj);
-      fabricCanvas.requestRenderAll();
-    }
-    syncLayerButtons();
-    broadcastChange();
-    pushHistory();
-  }
-
-  // No pushHistory() here on purpose — this fires continuously while the
-  // opacity slider is being dragged ('input' event), and snapshotting
-  // full image state on every tick would be spammy/expensive. The
-  // slider's 'change' event (fires once, on release) calls
-  // commitHistory() below instead.
-  function setAttireOpacity(val) {
-    attireOpacity = val;
-    if (attireObj) {
-      attireObj.set('opacity', val);
-      fabricCanvas.requestRenderAll();
-    }
-    broadcastChange();
-  }
-
-  /** Records one history checkpoint — for actions (like a slider) that update live but should only be one undo step per interaction. */
-  function commitHistory() {
-    pushHistory();
-  }
-
-  // ---- Workspace zoom (view only — never touches photo/attire framing) ----
+  // ---- Workspace zoom (view only — never touches photo framing) ----
 
   function applyZoom(z) {
     viewZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
@@ -847,11 +661,6 @@ const CanvasEditor = (() => {
     return {
       photoDataUrl: photoObj ? imageToDataUrl(photoObj.getElement(), 1600) : null,
       photoTransform: getObjTransform(photoObj),
-      attireEnabled,
-      attireOpacity,
-      attireSourceKey,
-      attireCustomDataUrl: attireSourceKey === 'custom' ? attireCustomDataUrl : null,
-      attireTransform: getObjTransform(attireObj),
       background: {
         mode: background.mode,
         color: background.color,
@@ -861,15 +670,19 @@ const CanvasEditor = (() => {
   }
 
   /**
-   * Restores a saved edit (see getSaveState) — photo/attire stay fully
+   * Restores a saved edit (see getSaveState) — the photo stays fully
    * editable afterward, not flattened. `quiet` is used internally by
    * undo/redo: skips the "restored from a saved job" status text and,
    * critically, does NOT call resetHistory() (which would wipe the very
    * undo/redo stack this is being called from) — the outer
    * restoringHistory flag is also preserved rather than force-cleared,
    * so a loadState() called *during* an undo/redo doesn't let its own
-   * internal setPhotoObject()/setAttireObject() calls push new history
-   * entries.
+   * internal setPhotoObject() calls push new history entries.
+   *
+   * Jobs saved before the old attire-overlay system was removed may
+   * still carry `attireEnabled`/`attireSourceKey`/etc. fields — they're
+   * simply ignored here now, not migrated; there's nothing left to
+   * restore them into.
    */
   async function loadState(saved, opts) {
     const quiet = !!(opts && opts.quiet);
@@ -886,15 +699,6 @@ const CanvasEditor = (() => {
       photoObj = null;
       updateDomForPhotoPresence();
     }
-
-    attireEnabled = !!saved.attireEnabled;
-    attireOpacity = saved.attireOpacity != null ? saved.attireOpacity : 1;
-    const sourceKey = saved.attireSourceKey || 'male';
-    const attireDataUrl = sourceKey === 'custom' && saved.attireCustomDataUrl
-      ? saved.attireCustomDataUrl
-      : AttireRenderer.getDefaultAttireDataUrl(sourceKey === 'female' ? 'female' : 'male');
-    attireCustomDataUrl = sourceKey === 'custom' ? saved.attireCustomDataUrl : null;
-    await loadAttireSource(sourceKey, attireDataUrl, saved.attireTransform);
 
     const bgImg = saved.background && saved.background.mode === 'image' && saved.background.imageDataUrl
       ? await loadImageFromUrl(saved.background.imageDataUrl)
@@ -936,14 +740,7 @@ const CanvasEditor = (() => {
     wireLayerControls();
     wireEraserControls();
     wireHistoryControls();
-    // hidden until enabled; resetHistory() waits for this so the baseline
-    // undo state already has the default attire object in place, instead
-    // of the load itself becoming an extra (fake) undo step.
-    restoringHistory = true;
-    loadAttireSource('male', AttireRenderer.getDefaultAttireDataUrl('male'), null).then(() => {
-      restoringHistory = false;
-      resetHistory();
-    });
+    resetHistory();
     applyZoom(INITIAL_ZOOM);
     updateDomForPhotoPresence();
   }
@@ -951,8 +748,7 @@ const CanvasEditor = (() => {
   return {
     init, getSaveState, loadState, getOriginalFile,
     setCutout, setBackgroundColor, setBackgroundImage, clearBackground,
-    setAttireEnabled, setAttireGender, setAttireOpacity, setAttireCustomImage,
-    autoFitFace, getPhotoElement, getAttireElement, setEnhancedPhoto, alignAttireToPhoto,
-    undo, redo, commitHistory,
+    autoFitFace, getPhotoElement, setEnhancedPhoto,
+    undo, redo,
   };
 })();

@@ -26,9 +26,14 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Iterator;
 import org.json.JSONObject;
 
 /**
@@ -78,6 +83,19 @@ import org.json.JSONObject;
  * level, so it replaces the old MediaStore/legacy-File branching
  * entirely rather than sitting alongside it. See CLAUDE.md's "Mobile
  * app (Android)" section for the full writeup.
+ *
+ * `callProvider` (added for the AI Formal-Attire Assistant / Multi-
+ * Provider Model Settings feature — see modelProviders.js) is the same
+ * "browser fetch() is subject to CORS/WebView restrictions, a native
+ * HTTP client isn't" pattern as Electron's own `ai-provider-call` IPC
+ * handler (desktop/electron/main.js), just via java.net.HttpURLConnection
+ * instead of Node's http/https modules. Runs on its own background
+ * Thread (not the WebView's own JS-bridge thread, and never the UI
+ * thread) since a generation call can take several seconds — blocking
+ * either of those would freeze the page/app. Result comes back via
+ * window.__androidProviderCallback(id, ok, status, bodyOrError), mirrored
+ * from modelProviders.js's own androidCallProvider() — see that file's
+ * comment for the exact contract.
  */
 public class MainActivity extends Activity {
 
@@ -226,6 +244,32 @@ public class MainActivity extends Activity {
         });
     }
 
+    /** Calls back into modelProviders.js's androidCallProvider() pending-promise map. */
+    private void notifyProviderJs(final String requestId, final boolean ok, final int status, final String bodyOrError) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                String js = "window.__androidProviderCallback && window.__androidProviderCallback("
+                    + JSONObject.quote(requestId) + "," + ok + "," + status + ","
+                    + JSONObject.quote(bodyOrError) + ")";
+                webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
+    /** Reads an InputStream to completion. Returns an empty array for a null stream (e.g. a response with no body). */
+    private static byte[] readAllBytes(InputStream is) throws IOException {
+        if (is == null) return new byte[0];
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        int len;
+        while ((len = is.read(chunk)) != -1) {
+            buffer.write(chunk, 0, len);
+        }
+        is.close();
+        return buffer.toByteArray();
+    }
+
     /** Renders `bitmap` as the sole page of a PDF sized to `widthIn`x`heightIn`, then hands it to Android's PrintManager. */
     private void doPrint(final Bitmap bitmap, final double widthIn, final double heightIn) {
         PrintManager printManager = (PrintManager) getSystemService(PRINT_SERVICE);
@@ -363,6 +407,74 @@ public class MainActivity extends Activity {
                     doPrint(bitmap, widthIn, heightIn);
                 }
             });
+        }
+
+        /**
+         * Makes a real HTTP(S) request to an AI provider's API and returns
+         * the result via notifyProviderJs() — see the class doc comment
+         * above and modelProviders.js's androidCallProvider() for the
+         * full contract. Runs on its own Thread (not the addJavascriptInterface
+         * call's own background thread, and never the UI thread) since a
+         * generation request can take several seconds.
+         */
+        @JavascriptInterface
+        public void callProvider(final String requestId, final String method, final String urlStr,
+                                  final String headersJson, final String body) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    HttpURLConnection conn = null;
+                    try {
+                        URL url = new URL(urlStr);
+                        conn = (HttpURLConnection) url.openConnection();
+                        conn.setRequestMethod((method == null || method.length() == 0) ? "GET" : method);
+                        conn.setConnectTimeout(60000);
+                        conn.setReadTimeout(60000);
+                        conn.setInstanceFollowRedirects(true);
+
+                        try {
+                            JSONObject headers = new JSONObject(headersJson == null || headersJson.length() == 0 ? "{}" : headersJson);
+                            Iterator<String> keys = headers.keys();
+                            while (keys.hasNext()) {
+                                String key = keys.next();
+                                conn.setRequestProperty(key, headers.getString(key));
+                            }
+                        } catch (Exception ignored) {
+                            // Malformed/empty headers JSON — proceed without them
+                            // rather than fail the whole request over it.
+                        }
+
+                        if (body != null && body.length() > 0) {
+                            conn.setDoOutput(true);
+                            byte[] bodyBytes = body.getBytes("UTF-8");
+                            OutputStream os = conn.getOutputStream();
+                            try {
+                                os.write(bodyBytes);
+                            } finally {
+                                os.close();
+                            }
+                        }
+
+                        int status = conn.getResponseCode();
+                        InputStream is = (status >= 200 && status < 400) ? conn.getInputStream() : conn.getErrorStream();
+                        byte[] responseBytes = readAllBytes(is);
+                        // Mirrors Electron's ai-provider-call handler: an
+                        // image/* response is base64-encoded (some providers
+                        // return raw image bytes instead of JSON+base64), a
+                        // provider marked as JS's own callHttp() already
+                        // knows how to detect base64-vs-JSON either way.
+                        String contentType = conn.getContentType();
+                        String responseBody = (contentType != null && contentType.startsWith("image/"))
+                            ? Base64.encodeToString(responseBytes, Base64.NO_WRAP)
+                            : new String(responseBytes, "UTF-8");
+                        notifyProviderJs(requestId, true, status, responseBody);
+                    } catch (Exception e) {
+                        notifyProviderJs(requestId, false, 0, String.valueOf(e.getMessage()));
+                    } finally {
+                        if (conn != null) conn.disconnect();
+                    }
+                }
+            }).start();
         }
     }
 }

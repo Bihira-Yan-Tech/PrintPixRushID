@@ -188,32 +188,75 @@ there's no longer a separate "attire" Fabric object at all.
 - [x] `git commit` — done, multiple commits through this whole pass
       (see git log)
 
-### Mobile (not started)
-- [ ] Port `modelProviders.js`, `aiAttireAssistant.js`,
+### Mobile (Sept 9, 2026 pass)
+- [x] Ported `modelProviders.js`, `aiAttireAssistant.js`,
       `formalAttireCommand.js`, `providerSettings.js`,
-      `faceFitHeuristic.js` to `mobile/js/modules/`
-- [ ] Delete the same superseded files on the mobile side
-- [ ] Port the same `canvasEditor.js`/`index.html`/`app.js` edits
-- [ ] Add `AndroidBridge.callProvider` in `MainActivity.java` (same
-      request/callback pattern as the existing `saveFileAs`/
-      `printImage`) — `modelProviders.js`'s `callHttp()` already checks
-      for `window.AndroidBridge.callProvider` and will use it once it
-      exists; falls back to plain `fetch()` until then (same CORS risk
-      the old `bgRemoval.js` has on mobile — see `CLAUDE.md`'s
-      documented WebView dynamic-import gap, a *different*, still-open,
-      pre-existing issue, not something this feature needs to fix)
-- [ ] Rebuild + test on the emulator
+      `faceFitHeuristic.js` to `mobile/js/modules/` (copied as-is from
+      desktop — no mobile-specific changes needed in these files)
+- [x] Deleted the superseded mobile files: `attireControls.js`,
+      `attireEnhance.js`, `attireRenderer.js`, `poseDetection.js`
+- [x] Ported `canvasEditor.js` (desktop's fully-updated version, with
+      mobile's own `MIN_ZOOM`/`INITIAL_ZOOM = 0.10` and
+      `applyZoom(INITIAL_ZOOM)` re-applied on top — verified via diff
+      before/after, not just copy-pasted blind), `app.js` (straight
+      copy — no mobile-specific lines existed there), `index.html`
+      (straight copy of desktop's, then re-applied mobile's 3 zoom-
+      default strings: `zoomLabelText` 10%, `previewZoomLabel` 25%,
+      `zoomRange` min/value 10). Also ported the `job:applied`
+      button-reenable fix to `autoEnhance.js`/`bgRemoval.js` (mobile
+      never had it — straight copies) and removed the now-dead
+      `AttireControls.syncUI(job.photo)` call from `saveRecopy.js`
+      (mobile's own AndroidBridge save-flow code left untouched).
+- [x] Added `AndroidBridge.callProvider(requestId, method, url,
+      headersJson, body)` to `MainActivity.java` — real HTTP via
+      `java.net.HttpURLConnection` on its own background `Thread`
+      (never the UI thread or the JS-bridge thread — a generation call
+      can take several seconds), posts back through
+      `window.__androidProviderCallback` exactly matching
+      `modelProviders.js`'s `androidCallProvider()` contract. Mirrors
+      Electron's `ai-provider-call` IPC handler's image/* → base64
+      convention so `callHttp()` treats either bridge's result
+      identically. **Known gap** (not hit by any shipped preset):
+      `AndroidManifest.xml`'s `usesCleartextTraffic="false"` blocks a
+      plain-`http://` custom provider (e.g. local OmniRoute) on mobile
+      — documented honestly in `CLAUDE.md`, not fixed (every real
+      preset uses `https://`).
+- [x] Rebuilt via `npm run build:apk:manual` — clean build, all 10
+      `.class` files (including the new `AndroidBridge$4.class` for
+      `callProvider`'s own anonymous `Thread`/`Runnable`) correctly
+      dexed by the existing glob-based dexing step. APK installs and
+      launches successfully; screenshot confirms the new UI renders
+      correctly (header, startup gate, and critically the mobile-only
+      "25%"/"10%" zoom defaults are visible, confirming the port's
+      zoom-constant changes actually took effect).
+      **Testing was hampered by severe emulator instability this
+      session** — the `PrintPixTest` AVD's system_server crashed with
+      `DeadSystemException` mid-session (unrelated to any app code —
+      happened before our app was even launched) and, after a reboot
+      and a full wipe-data cold restart, the system as a whole became
+      unresponsive enough that a single tap took 6+ minutes to not
+      register and `uiautomator dump` returned "null root node". This
+      matches (and is worse than) `CLAUDE.md`'s own pre-existing
+      "This emulator is unreliable in this dev environment" note — real
+      device testing remains the trustworthy signal for anything beyond
+      "does it build, install, and render", which is as far as this
+      session could push it before the environment became unusable.
+      No `FATAL EXCEPTION` was ever logged for `com.printpixrushid.app`
+      itself at any point.
 
-### Docs / delivery (not started)
-- [ ] Update `CLAUDE.md`: replace the old Formal Attire /
+### Docs / delivery
+- [x] Updated `CLAUDE.md`: replaced the old Formal Attire /
       "Known simplifications" write-up with the new AI Assistant +
-      Provider Settings system; also correct the existing
+      Provider Settings system throughout (Architecture bullets,
+      Custom events, Design system, Known simplifications, Status vs.
+      spec, and the Mobile app (Android) bridge section); corrected the
       (confirmed-wrong) claim that WebView JS console output doesn't
-      reach `adb logcat` — real testing in the prior session showed it
-      does, via `chromium: [INFO:CONSOLE(...)]` entries
-- [ ] Rebuild the desktop installer (currently stale, predates this
-      whole effort)
-- [ ] Final mobile APK rebuild + deliver
+      reach `adb logcat` — it does, via `chromium: [INFO:CONSOLE(...)]`
+      entries.
+- [x] Rebuilt the desktop installer — `PrintPix Rush ID Setup 1.0.0.exe`
+      (~80MB), built clean via `npm run dist`.
+- [x] Final mobile APK rebuilt — `PrintPixRushID-signed.apk`, installs
+      and launches correctly (see emulator caveat above).
 
 ## Review punch-list (from the "review muna" ask, folded into this pass)
 1. ~~No git repo for this project~~ — **fixed**: `git init` +
