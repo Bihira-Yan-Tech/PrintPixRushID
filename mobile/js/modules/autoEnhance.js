@@ -208,8 +208,17 @@ const AutoEnhance = (() => {
     // loaded. Found via testing while building the AI Formal Attire
     // Assistant (same bug hit that button too — see formalAttireCommand.js).
     document.addEventListener('job:applied', () => {
-      enhanceBtn.disabled = !CanvasEditor.getPhotoElement();
+      // Order matters: setLoading(false, ...) itself writes
+      // enhanceBtn.disabled = false (isLoading) as part of resetting the
+      // loading UI — calling it AFTER the line below would silently
+      // re-enable the button even for a job with no photo (a restore to
+      // a truly blank job would leave Auto Enhance clickable with
+      // nothing to enhance). Real bug found via audit: this used to run
+      // setLoading() second, clobbering the correct disabled state that
+      // was just set. setLoading() first, then the real disabled value
+      // last, so it's the one that sticks.
       setLoading(false, defaultHintText);
+      enhanceBtn.disabled = !CanvasEditor.getPhotoElement();
     });
   }
 

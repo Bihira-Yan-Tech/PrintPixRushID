@@ -27,10 +27,6 @@ const ProviderSettings = (() => {
   }
 
   function render() {
-    presetSelect.innerHTML = Object.values(ModelProviders.PROVIDER_PRESETS)
-      .map(p => `<option value="${p.id}">${escapeHtml(p.label)}</option>`).join('');
-    onPresetChange();
-
     const configs = ModelProviders.loadConfigs();
     listEl.innerHTML = '';
     if (!configs.length) {
@@ -130,6 +126,20 @@ const ProviderSettings = (() => {
     baseUrlField = document.getElementById('providerBaseUrlField');
     baseUrlInput = document.getElementById('providerBaseUrlInput');
     addBtn = document.getElementById('providerAddBtn');
+
+    // Populated once, here, not in render() — PROVIDER_PRESETS is a
+    // static list that never changes at runtime. render() used to
+    // rebuild this on every list update (delete/test), which silently
+    // reset the Add-provider form's dropdown back to the first preset
+    // (and re-ran onPresetChange()'s show/hide) any time the user
+    // clicked Test/Delete on an already-listed provider — a real bug:
+    // it could discard an in-progress preset selection while the
+    // already-typed key/baseURL text stayed behind in now-mismatched
+    // (possibly hidden) fields, ready to be silently submitted under
+    // the wrong preset if the user then clicked "Add provider".
+    presetSelect.innerHTML = Object.values(ModelProviders.PROVIDER_PRESETS)
+      .map(p => `<option value="${p.id}">${escapeHtml(p.label)}</option>`).join('');
+    onPresetChange();
 
     openBtn.addEventListener('click', open);
     closeBtn.addEventListener('click', close);

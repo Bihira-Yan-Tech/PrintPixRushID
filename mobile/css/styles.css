@@ -60,6 +60,25 @@
 
 * { box-sizing: border-box; }
 
+/* Generic "hide this element" utility. Real bug found via audit: this
+   used to only exist as five separate compound selectors
+   (.panel.is-hidden, .sub-controls.is-hidden, .field-row.is-hidden,
+   .modal-overlay.is-hidden, .progress-bar.is-hidden) instead of a true
+   utility class — every other element that ever got `is-hidden` toggled
+   onto it (.field, .hint-text, .btn-primary, .modal-body, and any
+   future one) silently stayed visible, since none of those base classes
+   had a matching compound rule. Concretely: the startup gate showed
+   "Continue where you left off" even with no saved draft AND showed the
+   "pick a saved job" panel permanently stacked under the initial
+   choices; the Add Provider form's API key/Base URL fields never hid
+   themselves per preset; the Background section showed before any photo
+   was uploaded; and several "nothing here yet" hints (ID sizes, saved
+   jobs) never disappeared once real content existed. `!important`
+   is deliberate here — a utility class whose entire job is "hide this"
+   must always win regardless of the specificity of whatever more
+   specific rule set that element's own `display` in the first place. */
+.is-hidden { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -439,8 +458,6 @@ button, input, select {
   overflow-y: auto;
 }
 
-.panel.is-hidden { display: none; }
-
 .panel-title {
   display: flex;
   align-items: center;
@@ -667,8 +684,6 @@ input[type="range"].control {
   padding-top: 12px;
   border-top: 1px dashed var(--line);
 }
-.sub-controls.is-hidden { display: none; }
-
 /* ============ BACKGROUND SWATCHES ============ */
 
 .swatch-row {
@@ -788,7 +803,6 @@ input[type="range"].control {
 /* ============ ID SIZE GRID (Step 3) ============ */
 
 .field-row { display: flex; gap: 10px; }
-.field-row.is-hidden { display: none; }
 .field-row .field { flex: 1; margin-bottom: 0; }
 
 .size-grid {
@@ -841,8 +855,6 @@ input[type="range"].control {
   padding: 24px;
   z-index: 1000;
 }
-.modal-overlay.is-hidden { display: none; }
-
 .modal-box {
   width: min(460px, 100%);
   max-height: 90vh;
@@ -1012,7 +1024,6 @@ input[type="range"].control {
   overflow: hidden;
   margin-top: 8px;
 }
-.progress-bar.is-hidden { display: none; }
 .progress-bar-fill {
   height: 100%;
   width: 0%;

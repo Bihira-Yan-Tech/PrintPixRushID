@@ -677,11 +677,10 @@
           <h4>2. Upload &amp; Edit</h4>
           <ul>
             <li>Upload a photo, then drag it and use the corner handles to reposition/resize — that framing is what gets cropped into every copy.</li>
-            <li>Turn on <strong>Formal attire</strong> to overlay a suit/blouse on the photo — pick Male/Female, or upload your own (background is removed automatically), then drag/resize it independently of the photo. <strong>Align to photo</strong> snaps it back to center.</li>
-            <li>The <strong>Layers</strong> list lets you click "Photo" or "Attire" to select one when they overlap on the canvas.</li>
             <li><strong>Remove background</strong> cuts out the subject (first use downloads a small AI model — needs internet once), then pick a background color, image, or leave it transparent.</li>
             <li><strong>Auto Enhance</strong> auto-adjusts levels, color, and sharpness (plain image processing, no AI, instant). <strong>Eraser</strong> brushes small areas to transparent — a dashed circle on the canvas shows the brush's actual size as you move the pointer, so it's easy to see what will be erased.</li>
-            <li><strong>Undo/Redo</strong> (Ctrl+Z / Ctrl+Y) step back and forth through your edits. The <strong>Delete</strong> button removes whichever layer is selected.</li>
+            <li>Under <strong>Command Options</strong>, pick Male/Female and click <strong>Add Formal Attire</strong> to have AI generate the person actually wearing formal attire — this sends the photo to whichever AI provider you've added and tested under <strong>AI Providers</strong> (the icon button, top-right of the header); add a free API key there first if nothing's configured yet. It tries your working providers automatically (free ones first) and replaces the photo with the result — needs internet every time, not just on first use.</li>
+            <li><strong>Undo/Redo</strong> (Ctrl+Z / Ctrl+Y) step back and forth through your edits. The <strong>Delete photo</strong> button clears the current photo back to the empty drop-zone.</li>
             <li><strong>Workspace zoom</strong> only zooms your view (like Photoshop) — it doesn't change the photo's actual size or crop.</li>
           </ul>
         </div>
@@ -705,7 +704,7 @@
         <div class="guide-section">
           <h4>Good to know</h4>
           <ul>
-            <li>Editing, arranging, upscaling, and PDF export all work fully offline. Only "Remove background" needs internet, and only the first time it's used (its AI model then stays cached in the browser).</li>
+            <li>Editing, arranging, Auto Enhance, and PDF export all work fully offline. "Remove background" needs internet only the first time it's used (its AI model then stays cached in the browser) — <strong>Add Formal Attire</strong> needs internet every time, since it calls a real AI provider over the network for each generation.</li>
             <li>Saved jobs live only in this browser, on this computer — export a job as .json before switching devices or clearing browser data, or it'll be gone for good.</li>
             <li>Live Preview only fills one physical sheet — if a size's quantity doesn't all fit, the extra copies just aren't shown (no multi-sheet pagination yet).</li>
           </ul>

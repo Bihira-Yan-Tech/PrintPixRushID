@@ -1,5 +1,129 @@
 # PROGRESS.md — AI Formal-Attire Assistant + Multi-Provider Model Settings
 
+## Full system audit (Sept 9, 2026) — 5 real bugs found and fixed
+
+User asked for a full review/testing pass across the whole system (not
+just the new feature), with live testing on both platforms until no
+more bugs turned up. Findings, most significant first:
+
+1. **`.is-hidden` was never a real generic utility class — a systemic,
+   app-wide bug.** It only had CSS rules for 5 specific compound
+   selectors (`.panel.is-hidden`, `.sub-controls.is-hidden`,
+   `.field-row.is-hidden`, `.modal-overlay.is-hidden`,
+   `.progress-bar.is-hidden`). Every OTHER element that ever got
+   `is-hidden` toggled onto it — `.field`, `.hint-text`, `.btn-primary`,
+   `.modal-body` — silently stayed visible regardless of the class.
+   Concrete symptoms this caused, all confirmed live before the fix:
+   - The startup gate showed **"Continue where you left off" even with
+     no saved autosave draft**, AND showed the "pick a saved job" panel
+     permanently stacked underneath the initial New Job/Open Job choices
+     (both panels visible at once, always).
+   - The Add Provider form's **API key / Base URL fields never hid
+     themselves** per the selected preset (e.g. Pollinations, which
+     needs neither, still showed both).
+   - The **Background swatches section showed before any photo was
+     uploaded**.
+   - "Nothing added yet" / "No saved jobs yet" hint text **never
+     disappeared** once real ID sizes or saved jobs actually existed.
+   - The Help Guide, Provider Settings, and Print Preview modals were
+     unaffected by this specific bug only because `.modal-overlay` was
+     one of the 5 covered selectors — but every *other* still-hidden
+     element inside those flows was not.
+   Fixed by adding one real `.is-hidden { display: none !important; }`
+   rule (`!important` deliberate — a "hide this" utility must always win
+   over whatever `display` the element's own class already set) and
+   removing the 5 now-redundant specific rules. Fixed identically in
+   both `desktop/css/styles.css` and `mobile/css/styles.css`.
+2. **`providerSettings.js`'s `render()` reset the Add-provider form's
+   preset dropdown on every list update** (e.g. clicking Test/Delete on
+   an already-added provider) — `presetSelect.innerHTML` was rebuilt
+   from scratch every render, silently reverting the user's in-progress
+   preset selection back to the first preset (Pollinations) and re-
+   running its show/hide logic, while whatever key/Base URL text they'd
+   already typed stayed behind in the now-mismatched (possibly hidden)
+   fields — ready to be silently submitted under the wrong preset if
+   "Add provider" was clicked next. Fixed by populating the dropdown
+   once in `init()` instead of on every `render()` (`PROVIDER_PRESETS`
+   is a static list, never changes at runtime, so it never needed to be
+   rebuilt at all). Verified live: selected Gemini + typed a key, then
+   clicked Test on the pre-existing Pollinations row — dropdown and key
+   field now correctly stay put instead of resetting.
+3. **`autoEnhance.js`'s `job:applied` handler set the correct
+   `enhanceBtn.disabled` value, then immediately clobbered it** by
+   calling `setLoading(false, ...)` right after — `setLoading()` itself
+   unconditionally writes `enhanceBtn.disabled = isLoading` as part of
+   resetting the loading UI, so the button ended up **permanently
+   re-enabled after every "New Job"/"Open Job"/restore, even for a job
+   with no photo at all** (clicking it then was a harmless no-op thanks
+   to a defensive guard in `handleEnhance()`, but the button visibly
+   looked clickable when it shouldn't have been). This is a direct
+   regression of the exact bug class the AI-Assistant pass had
+   supposedly already fixed for this button (see the "Real bugs found
+   via live testing" section below) — the fix landed, but this later
+   `setLoading()` call undid it on the very next line. Root-caused via
+   a live property-setter trace (patched `enhanceBtn.disabled`'s setter
+   to log every write + stack trace), not guesswork. Fixed by swapping
+   the two lines' order so the real disabled-value write happens last.
+4. **The in-app Help Guide (`?` button) still described the OLD, fully
+   -removed manual attire-overlay system** — "Turn on Formal attire to
+   overlay a suit/blouse... drag/resize it independently... Align to
+   photo snaps it back to center" and "The Layers list lets you click
+   Photo or Attire..." — none of which exist anymore. Also said only
+   "Remove background" needs internet, not mentioning Add Formal
+   Attire needs it on every use. Rewritten to describe the actual
+   current Command Options / Add Formal Attire / AI Providers flow, in
+   both `desktop/index.html` and `mobile/index.html`.
+5. Re-verified (not new, already fixed this pass, but confirmed still
+   correct after all the above): the `job:applied`/`upload:change`
+   button-reenable behavior across `formalAttireCommand.js`/
+   `bgRemoval.js`'s `syncUI()` — both correct, no clobbering issue like
+   #3 (bgRemoval's `syncUI()` only ever writes `.disabled` once, no
+   `setLoading()`-style call after it).
+
+**How this was tested**: a full code review pass (grep for stale
+references to deleted modules, read every newly-added file end-to-end)
+followed by live testing — desktop via a local static server + the
+Browser pane (real `DataTransfer` file drops, real clicks, direct pixel
+sampling to verify the Eraser's transparency rather than trusting a
+screenshot alone, a live JS property-setter trace to root-cause bug #3),
+covering: startup gate (all 3 paths), photo upload, Auto Enhance, Undo/
+Redo, Eraser (confirmed via `getImageData` alpha sampling, not just
+visual — a white-background canvas makes a genuinely transparent erase
+look identical to an uncommitted stroke in a screenshot), Provider
+Settings (add/test/delete, including a real network call to Gemini's
+API that correctly surfaced a real `HTTP 400 API key not valid` error),
+Add Formal Attire's "every provider failed" path (Pollinations correctly
+attempted and correctly explained why it can't edit), ID Sizing + Live
+Preview packing, Name tag, Print Preview modal + PDF export (jsPDF
+loads, no console errors), and a full Save Job → reload → "Continue
+where you left off" / Open Job → restore round trip (confirmed both the
+autosave draft and the named saved job survive correctly, and every
+button's disabled state matches "does a photo exist" in both
+directions). Also launched the real Electron desktop app fresh — starts
+clean, no preload/main-process errors, real window title.
+
+Mobile got a full rebuild with all these fixes and was installed +
+launched on a real emulator (`PrintPixTest`, cold-booted, not reused)
+twice, in two independent sessions — clean install, clean launch each
+time, confirmed via `adb logcat`/`dumpsys activity` as the resumed
+foreground activity with **zero `FATAL EXCEPTION` for
+`com.printpixrushid.app` at any point**, and one full screenshot early
+in testing showing the new UI rendering correctly (including the
+mobile-only zoom defaults). Deeper interactive click-through on-device
+was blocked partway through by the emulator host machine hitting 100%
+CPU (confirmed via `Get-Counter`/`Get-Process` — several long-running,
+unrelated processes, not this app, were the cause) causing system-wide
+ANRs in unrelated OS packages (`com.google.android.gms`, phone, media
+provider, the launcher — never this app) and eventually a graphics-
+pipeline stall (screencap returning solid black while the OS itself
+still correctly reported the app as the resumed foreground activity
+with no crash). This is the same category of pre-existing emulator
+unreliability already documented in `CLAUDE.md`'s "Self-testing the
+Android build (emulator)" section, now independently reconfirmed. Real-
+device testing remains the trustworthy way to verify anything beyond
+"does it build, install, launch, and render" in this specific dev
+environment.
+
 Tracking doc for an in-progress feature build. **Read this file first**
 if you're picking this up in a new session/agent. Root project doc is
 `CLAUDE.md` — read that too if unfamiliar with the app.
