@@ -246,11 +246,14 @@ see the Save Job bullet under Known simplifications.
   handle panning" technique as Step 2's zoom.
   `packEntries()` tracks explicit **shelves** (`{y, height, width,
   cells}`), one per packed row, and centers each shelf independently
-  within the sheet's usable width — this (not the overall block) is what
-  "Align Center" (the ID Sizing panel's centering button) actually
-  triggers a repack against, so mixed-size rows (e.g. a row of 1×1s under
-  a row of 2×2s) each look centered on their own, not just the bounding
-  box of the whole packed stack.
+  within the sheet's usable width, so mixed-size rows (e.g. a row of
+  1×1s under a row of 2×2s) each look centered on their own, not just
+  the bounding box of the whole packed stack. This is NOT a manual
+  toggle/button — there is no "Align Center" control in the UI, it's
+  simply how the always-live layout is computed on every redraw. (An
+  earlier version of this doc, and the in-app Help Guide until a later
+  audit pass fixed it, incorrectly described this as a button — real
+  content bug, corrected; don't reintroduce it.)
 - `js/modules/bgRemoval.js` — "Remove background" button + background
   swatches (solid colors, custom color, custom image). Uses
   `@imgly/background-removal` loaded via **dynamic import from a CDN**
@@ -766,9 +769,9 @@ and/or an explicit retention policy if this goes beyond prototype use.
 4. Step 3 — ID Photo Sizes & Customization: standard sizes (1×1, 2×2,
    1.5×1.5, passport 35×45mm) or custom W×H, quantity, **add multiple
    different sizes to the same sheet** via "Add to sheet" (removable
-   list), an **Align Center** button that re-centers every packed shelf
-   independently (see the `livePreview.js` bullet above — the actual fix
-   was per-shelf centering, not just centering the whole block), name tag
+   list), each packed shelf automatically centered independently (see
+   the `livePreview.js` bullet above — per-shelf centering, not just
+   centering the whole block; this is automatic, not a button), name tag
    (customizable text *and* color). Wired into Live Preview via
    `idsize:change`.
 5. Step 4 — Print Layout, Print Preview & PDF Export: sheet margin,
