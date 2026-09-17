@@ -628,7 +628,8 @@
 
         <div class="job-list" id="providerList" style="margin-top:12px;"></div>
 
-        <div class="field-row" style="margin-top:16px;">
+        <p class="hint-text is-compact" id="providerFormTitle" style="margin-top:16px; font-weight:600;">Add a new provider</p>
+        <div class="field-row">
           <div class="field">
             <label for="providerPresetSelect">Provider</label>
             <select id="providerPresetSelect" class="control"></select>
@@ -646,7 +647,10 @@
           <label for="providerBaseUrlInput">Base URL</label>
           <input type="text" id="providerBaseUrlInput" class="control" placeholder="e.g. https://your-omniroute-instance.example.com" />
         </div>
-        <button type="button" id="providerAddBtn" class="btn-outline full-width">Add provider</button>
+        <div class="field-row">
+          <button type="button" id="providerAddBtn" class="btn-outline full-width">Add provider</button>
+          <button type="button" id="providerCancelEditBtn" class="btn-outline full-width is-hidden">Cancel</button>
+        </div>
         <p class="hint-text is-compact">Keys are stored locally on this device only (same as saved jobs) — never sent anywhere except the provider you add.</p>
       </div>
     </div>

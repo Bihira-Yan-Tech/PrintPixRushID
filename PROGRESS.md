@@ -1,5 +1,47 @@
 # PROGRESS.md — AI Formal-Attire Assistant + Multi-Provider Model Settings
 
+## Provider editing gap fixed (Sept 17, 2026)
+
+User reported (in Taglish, imprecisely — "hirap mag-edit ang ating models
+... parang may sinasabing cannot directly edit", seen in the AI
+Providers modal on both platforms) that editing an AI provider felt
+blocked/impossible. Investigated live (uploaded a photo, opened AI
+Providers, tried editing fields — no reproduction of an actual block),
+then re-examined `providerSettings.js` and found the real, literal gap:
+**there was no Edit action at all** for an already-added provider —
+only Test, an enabled toggle, and Delete. Fixing a typo'd API key or
+changing a label meant delete-then-re-add-from-scratch, which matches
+"can't directly edit" exactly (there was genuinely no edit control to
+find).
+
+Fixed by adding a real Edit flow, in both `desktop/` and `mobile/`
+(`providerSettings.js` + `index.html`, identical on both platforms):
+- A new pencil "Edit" icon button per provider row.
+- Clicking it loads that provider's current preset/label/Base URL into
+  the same Add-provider form (which relabels to "Editing '<label>'" /
+  "Save changes", plus a new "Cancel" button) instead of creating a
+  second entry.
+- The API key field starts blank on edit (never round-trips the stored
+  secret back into the DOM) — leaving it blank on save keeps the
+  existing key; typing a new one replaces it. Placeholder text says so
+  explicitly ("Leave blank to keep the current key").
+- Saving calls `ModelProviders.updateProvider()`. If the preset/key/
+  Base URL actually changed, the previous test result is reset to
+  untested (a stale "✓ Working" badge would be lying about a config
+  that's no longer the one that was verified) — but editing just the
+  label leaves a still-valid "Working" status alone.
+- Deleting the provider currently being edited correctly exits edit
+  mode instead of leaving the form pointed at a now-nonexistent id.
+  Closing the modal also resets edit mode.
+
+Verified live end-to-end via the Browser pane: added a Gemini provider
+with a fake key, tested it (real network call, real `HTTP 400 API key
+not valid` error shown), edited it with a different fake key, confirmed
+the status correctly reset to "Not tested yet" (not left showing the
+stale error); separately edited Pollinations' label only and confirmed
+its "✓ Working" status was correctly preserved since nothing that
+actually needed re-verification changed.
+
 ## Full system audit (Sept 9, 2026) — 5 real bugs found and fixed
 
 User asked for a full review/testing pass across the whole system (not
