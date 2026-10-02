@@ -1,6 +1,6 @@
 {
   "name": "printpix-rush-id-mobile",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PrintPix Rush ID — ID photo generator & print layout editor (Android app)",
   "private": true,
   "scripts": {

@@ -1,6 +1,6 @@
 {
   "name": "printpix-rush-id-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PrintPix Rush ID — ID photo generator & print layout editor (Windows desktop app)",
   "main": "electron/main.js",
   "private": true,

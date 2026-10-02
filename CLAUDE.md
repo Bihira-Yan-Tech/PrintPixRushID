@@ -1049,7 +1049,16 @@ would do:
     automatically, which is why it wasn't needed for the file:// browser
     or Electron builds.
 - Rebuild with `npm run build:apk:manual` after any app change →
-  `manual-apk/build/PrintPixRushID-signed.apk`.
+  `manual-apk/build/PrintPixRushID-signed.apk`. **Set
+  `$env:PRINTPIX_KEYSTORE_PASSWORD` first** — the keystore password used
+  to be hardcoded in this script and `android/app/build.gradle`; it was
+  removed when the repo went public (the keystore file itself is
+  gitignored). The old password still exists in git history; that's low
+  risk while the keystore stays private, and rotating the key would stop
+  already-installed APKs from updating, so it was left as is. SDK/JDK
+  paths can be overridden with `PRINTPIX_ANDROID_SDK` / `PRINTPIX_JDK17`
+  (deliberately not `ANDROID_SDK_ROOT`, which is often set system-wide to
+  something else).
 - `minSdkVersion 22` (Android 5.1+, broad compatibility) /
   `targetSdkVersion 34`, matching Path A's `variables.gradle` defaults.
 

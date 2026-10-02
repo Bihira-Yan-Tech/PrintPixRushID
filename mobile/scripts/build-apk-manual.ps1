@@ -20,10 +20,14 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $manual = Join-Path $root "manual-apk"
-$sdk = "D:\Claude Code Projects\android-sdk"
+# Machine-specific defaults — override with PRINTPIX_ANDROID_SDK /
+# PRINTPIX_JDK17 on your own machine instead of editing this file.
+# (Deliberately NOT the standard ANDROID_SDK_ROOT: that one is often set
+# system-wide to some other SDK location and would silently break this.)
+$sdk = if ($env:PRINTPIX_ANDROID_SDK) { $env:PRINTPIX_ANDROID_SDK } else { "D:\Claude Code Projects\android-sdk" }
 $buildTools = Join-Path $sdk "build-tools\34.0.0"
 $platform = Join-Path $sdk "platforms\android-34\android.jar"
-$jdk = "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot"
+$jdk = if ($env:PRINTPIX_JDK17) { $env:PRINTPIX_JDK17 } else { "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot" }
 $env:JAVA_HOME = $jdk
 $env:Path = "$jdk\bin;" + $env:Path
 
@@ -96,11 +100,18 @@ Write-Host "6/7 Zipaligning..."
 Invoke-Checked "zipalign"
 
 Write-Host "7/7 Signing..."
+# The keystore itself (android\keystore\, gitignored) and its password are
+# never stored in this repo. Provide the password via an environment
+# variable:  $env:PRINTPIX_KEYSTORE_PASSWORD = "..."
+if (-not $env:PRINTPIX_KEYSTORE_PASSWORD) {
+    Write-Host "FAILED: set the PRINTPIX_KEYSTORE_PASSWORD environment variable first (see README.md > Building the Android APK)." -ForegroundColor Red
+    exit 1
+}
 & "$buildTools\apksigner.bat" sign `
   --ks (Join-Path $root "android\keystore\printpix-release.keystore") `
-  --ks-pass pass:PrintPixRush2026 `
+  --ks-pass env:PRINTPIX_KEYSTORE_PASSWORD `
   --ks-key-alias printpixrushid `
-  --key-pass pass:PrintPixRush2026 `
+  --key-pass env:PRINTPIX_KEYSTORE_PASSWORD `
   --out "build\PrintPixRushID-signed.apk" `
   "build\aligned.apk"
 Invoke-Checked "apksigner"

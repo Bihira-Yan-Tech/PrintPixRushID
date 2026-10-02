@@ -7,8 +7,8 @@ android {
         applicationId "com.printpixrushid.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -19,9 +19,11 @@ android {
     signingConfigs {
         release {
             storeFile file('keystore/printpix-release.keystore')
-            storePassword 'PrintPixRush2026'
+            // Never hardcode signing secrets in a public repo — supply the
+            // keystore password via the PRINTPIX_KEYSTORE_PASSWORD env var.
+            storePassword System.getenv('PRINTPIX_KEYSTORE_PASSWORD')
             keyAlias 'printpixrushid'
-            keyPassword 'PrintPixRush2026'
+            keyPassword System.getenv('PRINTPIX_KEYSTORE_PASSWORD')
         }
     }
     buildTypes {
